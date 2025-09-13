@@ -1,0 +1,15 @@
+# Python & env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+
+# App runtime data (อย่าใส่รูปอัปโหลด/DB ลง Git)
+uploads/
+data/
+
+# OS
+.DS_Store
+Thumbs.db

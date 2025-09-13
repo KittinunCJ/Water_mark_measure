@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ระบบสำรวจร่องรอยน้ำท่วม</title>
+
+  <!-- Tailwind + Font -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS/JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Marker Cluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <!-- Turf.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+
+  <style>
+    body { font-family: 'Sarabun', sans-serif; }
+    .upload-area { border: 2px dashed #3b82f6; transition: all .3s; }
+    .upload-area:hover { border-color:#1d4ed8; background:#eff6ff; }
+    .upload-area.dragover { border-color:#1d4ed8; background:#dbeafe; }
+
+    /* Modal */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 2000; display: none; }
+    .modal-backdrop.show { display: flex; }
+    .modal-box { position: relative; background: #fff; border-radius: .75rem; width: 100%; max-width: 42rem; margin: auto; box-shadow: 0 20px 40px rgba(0,0,0,.25); z-index: 2001; }
+    body.modal-open { overflow: hidden; }
+  </style>
+
+  <script>
+    const API_BASE = "";
+    const SKIP_INFER = new URLSearchParams(location.search).get("debug") === "1" ? 1 : 0;
+    const MAX_MB = 10;
+    const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
+    const DEFAULT_BOUNDARY_URL = "./cm_boundary.geojson";
+  </script>
+</head>
+
+<body class="bg-gray-50">
+  <!-- Header -->
+  <header class="bg-blue-600 text-white shadow">
+    <div class="container mx-auto px-4 py-5">
+      <div class="flex items-center justify-between">
+        <!-- ซ้าย: ชื่อระบบ (ไม่มีโลโก้) -->
+        <div>
+          <h1 class="text-2xl font-semibold">ระบบรวบรวมร่องรอยน้ำท่วม</h1>
+          <p class="text-blue-100 mt-1">รวบรวมข้อมูลจากภาพถ่ายภาคสนามเพื่อสร้างแผนที่ระดับน้ำท่วมย้อนหลัง</p>
+        </div>
+        <!-- ขวา: ปุ่มดาวน์โหลด + ตัวเลข -->
+        <div class="flex items-center gap-2">
+          <button id="exportBtn" class="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/20">ดาวน์โหลดข้อมูล</button>
+          <div class="text-right ml-3">
+            <div class="text-xs text-blue-100">ข้อมูลทั้งหมด</div>
+            <div class="text-xl font-bold" id="totalReports">0</div>
+            <div class="text-xs text-blue-100">รายงาน</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <div class="container mx-auto px-4 py-8">
+    <div class="grid lg:grid-cols-2 gap-8">
+      <!-- Upload -->
+      <div class="bg-white rounded-xl shadow p-6">
+        <h2 class="text-xl font-semibold text-gray-800 mb-6">อัปโหลดภาพร่องรอยน้ำท่วม</h2>
+
+        <div class="upload-area rounded-lg p-8 text-center mb-6" id="uploadArea">
+          <p class="text-lg text-gray-700 mb-1">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+          <p class="text-sm text-gray-500">รองรับไฟล์ JPG, PNG, WEBP (ขนาดไม่เกิน 10MB)</p>
+          <input type="file" id="imageInput" accept="image/*" class="hidden" multiple>
+          <div id="fileInfo" class="mt-3 text-sm text-gray-600"></div>
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">ตำแหน่งที่พบ</label>
+            <div class="flex gap-2 flex-wrap">
+              <input id="locationInput" type="text" placeholder='เช่น "18.7883, 98.9853"'
+                     class="flex-1 min-w-[220px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+              <button id="getLocationBtn" class="px-3 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg whitespace-nowrap">ใช้ตำแหน่งปัจจุบัน</button>
+              <button id="pickOnMapBtn" class="px-3 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg whitespace-nowrap">ปักหมุดบนแผนที่</button>
+            </div>
+            <div id="locationStatus" class="mt-2 text-sm hidden"></div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">ที่อยู่/จุดสังเกต (ถ้ามี)</label>
+            <input id="addressInput" type="text" placeholder="เช่น หน้าร้าน..., ซอย..., ตรงข้าม..."
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+            <p class="text-xs text-gray-500 mt-1">ถ้าเว้นว่าง ระบบจะใช้ค่าจากช่องพิกัด (lat, lng) ให้อัตโนมัติ</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">วัตถุที่ถ่าย</label>
+            <select id="objectTypeInput" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+              <option value="">เลือกวัตถุที่ถ่าย</option>
+              <option value="เสาไฟ">เสาไฟ</option>
+              <option value="รั้วบ้าน">รั้วบ้าน</option>
+              <option value="อื่นๆ">อื่นๆ (ระบุเอง)</option>
+            </select>
+          </div>
+
+          <div id="customObjectDiv" class="hidden">
+            <label class="block text-sm font-medium text-gray-700 mb-2">ระบุวัตถุ</label>
+            <input id="customObjectInput" type="text" placeholder="เช่น ป้ายจราจร, ต้นไม้, อาคาร"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">รายละเอียดเพิ่มเติม</label>
+            <textarea id="descriptionInput" rows="3" placeholder="อธิบายลักษณะรอยน้ำ สภาพแวดล้อม หรือข้อมูลเพิ่มเติม"
+                      class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
+          </div>
+
+          <button id="submitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg">บันทึกข้อมูล</button>
+        </div>
+      </div>
+
+      <!-- Map + list -->
+      <div class="space-y-6">
+        <div class="bg-white rounded-xl shadow p-6">
+          <h2 class="text-xl font-semibold text-gray-800 mb-4">แผนที่ร่องรอยน้ำท่วม</h2>
+          <div id="floodMap" class="rounded-lg h-[520px]"></div>
+
+          <div class="mt-3 flex items-center gap-2 flex-wrap">
+            <button id="toggleIdw" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">
+              แสดง/ซ่อนแผนที่ Interpolation
+            </button>
+          </div>
+
+          <!-- Legend -->
+          <div class="mt-4 flex flex-wrap gap-4 text-sm">
+            <div class="flex items-center"><div class="w-4 h-4 bg-red-500 rounded-full mr-2"></div><span>สูง (120+ ซม.)</span></div>
+            <div class="flex items-center"><div class="w-4 h-4 bg-orange-500 rounded-full mr-2"></div><span>ปานกลาง (60–120 ซม.)</span></div>
+            <div class="flex items-center"><div class="w-4 h-4 bg-yellow-500 rounded-full mr-2"></div><span>ต่ำ (0–60 ซม.)</span></div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-6">
+          <h2 class="text-xl font-semibold text-gray-800 mb-4">รายงานล่าสุด</h2>
+          <div id="recentReports" class="space-y-4"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="mt-8 grid md:grid-cols-4 gap-6">
+      <div class="bg-white rounded-xl shadow p-6 text-center">
+        <div id="avgLevel" class="text-2xl font-bold text-blue-600">0</div>
+        <div class="text-sm text-gray-600">ความสูงรอยน้ำเฉลี่ย</div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-6 text-center">
+        <div id="highRisk" class="text-2xl font-bold text-red-600">0</div>
+        <div class="text-sm text-gray-600">พื้นที่น้ำเคยท่วมสูง</div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-6 text-center">
+        <div id="totalAreas" class="text-2xl font-bold text-green-600">0</div>
+        <div class="text-sm text-gray-600">จำนวนจุดสำรวจ</div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-6 text-center">
+        <div id="lastUpdate" class="text-2xl font-bold text-purple-600">-</div>
+        <div class="text-sm text-gray-600">อัปเดตล่าสุด</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Modal: Alert ===== -->
+  <div id="alertModal" class="modal-backdrop items-center justify-center">
+    <div class="modal-box w-full max-w-md mx-4">
+      <div class="px-5 py-4 border-b">
+        <h3 id="alertTitle" class="text-lg font-semibold text-gray-800">แจ้งเตือน</h3>
+      </div>
+      <div class="px-5 py-4">
+        <p id="alertMessage" class="text-sm text-gray-700"></p>
+      </div>
+      <div class="px-5 py-4 border-t flex justify-end gap-2">
+        <button id="alertClose" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Modal: Export ===== -->
+  <div id="exportModal" class="modal-backdrop items-center justify-center">
+    <div class="modal-box w-full max-w-lg mx-4">
+      <div class="px-5 py-4 border-b flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800">ดาวน์โหลดข้อมูล</h3>
+          <p class="text-sm text-gray-500 mt-1">เลือกรูปแบบที่ต้องการดาวน์โหลด</p>
+        </div>
+        <button id="exportCloseX" class="text-2xl leading-none text-gray-400 hover:text-gray-600">&times;</button>
+      </div>
+      <div class="px-5 py-4 space-y-4">
+        <div class="border rounded-lg p-4">
+          <h4 class="font-medium text-gray-800">ข้อมูลรายงาน (CSV)</h4>
+          <div class="mt-3">
+            <button id="exportCsvBtn" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">ดาวน์โหลด CSV</button>
+          </div>
+        </div>
+        <div class="border rounded-lg p-4">
+          <h4 class="font-medium text-gray-800">ชั้นแผนที่ Interpolation</h4>
+          <p class="text-sm text-gray-600 mt-1">ดาวน์โหลดเป็น GeoJSON</p>
+          <div class="mt-3">
+            <button id="exportIdwBtn" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">ดาวน์โหลด GeoJSON</button>
+          </div>
+        </div>
+      </div>
+      <div class="px-5 py-4 border-t flex justify-end gap-2">
+        <button id="exportClose" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg">ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Modal: Pick-on-map ===== -->
+  <div id="pickModal" class="modal-backdrop items-center justify-center">
+    <div class="modal-box w-full max-w-3xl mx-4">
+      <div class="px-5 py-4 border-b flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800">โปรดปักหมุดเพื่อระบุพิกัด</h3>
+          <p class="text-sm text-gray-500 mt-1">คลิกบนแผนที่เพื่อเลือกจุด • สลับพื้นหลังได้</p>
+        </div>
+        <button id="pickCloseX" class="text-2xl leading-none text-gray-400 hover:text-gray-600">&times;</button>
+      </div>
+      <div class="px-5 pt-4 pb-2">
+        <div class="flex justify-between items-center mb-2">
+          <div class="space-x-2">
+            <button id="pickBaseOsm" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded">แผนที่</button>
+            <button id="pickBaseEsri" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded">ดาวเทียม</button>
+          </div>
+          <div class="text-sm text-gray-700">
+            พิกัดที่เลือก: <span id="pickedLatLng">-</span>
+          </div>
+        </div>
+        <div id="pickMap" class="h-[420px] rounded-md border"></div>
+      </div>
+      <div class="px-5 py-4 border-t flex justify-end gap-2">
+        <button id="pickCancel" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg">ยกเลิก</button>
+        <button id="pickConfirm" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg" disabled>ยืนยันพิกัด</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script>
+    // ===== State & DOM =====
+    let floodReports = [];
+    let idwLayer = null;
+    let lastIdwGeoJson = null;
+    let boundaryLayer = null;
+    let boundaryGeoJson = null;
+
+    const uploadArea = document.getElementById('uploadArea');
+    const imageInput = document.getElementById('imageInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const submitBtn = document.getElementById('submitBtn');
+    const totalReportsEl = document.getElementById('totalReports');
+    const recentReportsEl = document.getElementById('recentReports');
+    const getLocationBtn = document.getElementById('getLocationBtn');
+    const pickOnMapBtn = document.getElementById('pickOnMapBtn');
+    const locationInput = document.getElementById('locationInput');
+    const addressInput = document.getElementById('addressInput');
+    const locationStatus = document.getElementById('locationStatus');
+    const objectTypeInput = document.getElementById('objectTypeInput');
+    const customObjectDiv = document.getElementById('customObjectDiv');
+    const customObjectInput = document.getElementById('customObjectInput');
+    const descriptionInput = document.getElementById('descriptionInput');
+    const exportBtn = document.getElementById('exportBtn');
+
+    // ===== Modal helpers =====
+    const alertModal = document.getElementById('alertModal');
+    const alertTitle = document.getElementById('alertTitle');
+    const alertMessage = document.getElementById('alertMessage');
+    const alertClose = document.getElementById('alertClose');
+
+    const exportModal = document.getElementById('exportModal');
+    const exportClose = document.getElementById('exportClose');
+    const exportCloseX = document.getElementById('exportCloseX');
+    const exportCsvBtn = document.getElementById('exportCsvBtn');
+    const exportIdwBtn = document.getElementById('exportIdwBtn');
+
+    const pickModal = document.getElementById('pickModal');
+    const pickCloseX = document.getElementById('pickCloseX');
+    const pickCancel = document.getElementById('pickCancel');
+    const pickConfirm = document.getElementById('pickConfirm');
+    const pickedLatLngEl = document.getElementById('pickedLatLng');
+    const pickBaseOsmBtn = document.getElementById('pickBaseOsm');
+    const pickBaseEsriBtn = document.getElementById('pickBaseEsri');
+
+    function openModal(el) { el.classList.add('show'); document.body.classList.add('modal-open'); }
+    function closeModal(el) { el.classList.remove('show'); document.body.classList.remove('modal-open'); }
+
+    function showAlert(title, message) {
+      alertTitle.textContent = title || 'แจ้งเตือน';
+      alertMessage.textContent = message || '';
+      openModal(alertModal);
+    }
+    alertClose.addEventListener('click', () => closeModal(alertModal));
+    alertModal.addEventListener('click', (e) => { if (e.target === alertModal) closeModal(alertModal); });
+
+    function showExport() { openModal(exportModal); }
+    function hideExport() { closeModal(exportModal); }
+    exportBtn.addEventListener('click', showExport);
+    exportClose?.addEventListener('click', hideExport);
+    exportCloseX?.addEventListener('click', hideExport);
+    exportModal.addEventListener('click', (e) => { if (e.target === exportModal) hideExport(); });
+
+    // ===== Base maps =====
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' });
+    const imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' });
+
+    if (window.__leaflet_map__) { window.__leaflet_map__.remove(); }
+    const map = L.map('floodMap', { layers: [osm] }).setView([18.7883, 98.9853], 12);
+    window.__leaflet_map__ = map;
+
+    map.createPane('idwPane');      map.getPane('idwPane').style.zIndex = 350;
+    map.createPane('boundaryPane'); map.getPane('boundaryPane').style.zIndex = 360;
+
+    const baseLayers = { "แผนที่": osm, "ดาวเทียม": imagery };
+    const overlays = {};
+    L.control.layers(baseLayers, overlays, { position: 'topright', collapsed: false }).addTo(map);
+
+    const markersCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 50 });
+    map.addLayer(markersCluster);
+
+    // สีตามเกณฑ์
+    function severityColorByCm(cm) { if (cm > 120) return '#ef4444'; if (cm > 60) return '#f97316'; return '#eab308'; }
+    function colorByCm(cm)        { if (cm > 120) return '#ef4444'; if (cm > 60) return '#f59e0b'; return '#84cc16'; }
+
+    function thDateTime(iso){
+      if(!iso) return '-';
+      const d = new Date(iso);
+      if(isNaN(d)) return '-';
+      return d.toLocaleString('th-TH',{ timeZone:'Asia/Bangkok', hour12:false });
+    }
+
+    function addReportToMap(report) {
+      const cm = Math.round((report.water_level_m || 0) * 100);
+      const color = severityColorByCm(cm);
+      const marker = L.circleMarker([report.lat, report.lng], { radius: 8, color, fillColor: color, fillOpacity: 0.85 })
+        .bindPopup(`
+          <div style="font-size:14px;">
+            <div><b>พิกัด:</b> ${report.address || `${report.lat}, ${report.lng}`}</div>
+            <div><b>ความสูงรอยน้ำ:</b> ${(report.water_level_m || 0).toFixed(2)} m</div>
+            <div><b>วัตถุที่ถ่าย:</b> ${report.object_type || '-'}</div>
+            <div><b>รายละเอียดเพิ่มเติม:</b> ${report.description || '-'}</div>
+            <div><b>วันที่เก็บข้อมูล:</b> ${thDateTime(report.date_iso)}</div>
+            ${report.photo_url ? `<div style="margin-top:6px;"><a href="${API_BASE}${report.photo_url}" target="_blank" class="text-blue-600 underline">เปิดภาพ</a></div>` : ''}
+          </div>`);
+      markersCluster.addLayer(marker);
+    }
+
+    function fitMapToMarkers() {
+      const count = markersCluster.getLayers().length;
+      if (count > 0) map.fitBounds(markersCluster.getBounds(), { padding: [30, 30] });
+    }
+
+    // ===== UI helpers =====
+    function showLocationStatus(msg, type) {
+      locationStatus.classList.remove('hidden');
+      locationStatus.className = `mt-2 text-sm ${type==='success'?'text-green-600':type==='error'?'text-red-600':'text-blue-600'}`;
+      locationStatus.textContent = msg;
+      if (type === 'success' || type === 'error') setTimeout(() => locationStatus.classList.add('hidden'), 3000);
+    }
+
+    function timeAgo(date) {
+      if (!(date instanceof Date) || isNaN(date)) return '-';
+      const now = new Date();
+      const diffMin = Math.floor((now - date) / 60000);
+      if (diffMin < 1) return 'เมื่อครู่';
+      if (diffMin < 60) return `${diffMin} นาทีที่แล้ว`;
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return `${diffHr} ชั่วโมงที่แล้ว`;
+      return date.toLocaleDateString('th-TH', { timeZone:'Asia/Bangkok' });
+    }
+
+    function latestDateFromReports() {
+      let maxT = -Infinity;
+      for (const r of floodReports) {
+        if (!r?.date_iso) continue;
+        const t = new Date(r.date_iso).getTime();
+        if (!isNaN(t) && t > maxT) maxT = t;
+      }
+      return maxT === -Infinity ? null : new Date(maxT);
+    }
+
+    function updateStats() {
+      totalReportsEl.textContent = floodReports.length;
+      if (!floodReports.length) {
+        document.getElementById('avgLevel').textContent = 0;
+        document.getElementById('highRisk').textContent = 0;
+        document.getElementById('totalAreas').textContent = 0;
+        document.getElementById('lastUpdate').textContent = '-';
+        return;
+      }
+      const avg_m = floodReports.reduce((s, r) => s + (r.water_level_m || 0), 0) / floodReports.length;
+      const avg_cm = Math.round(avg_m * 100);
+      document.getElementById('avgLevel').textContent = avg_cm;
+      const highRisk = floodReports.filter(r => (r.water_level_m || 0) * 100 > 120).length;
+      document.getElementById('highRisk').textContent = highRisk;
+      document.getElementById('totalAreas').textContent = floodReports.length;
+
+      const lastD = latestDateFromReports();
+      document.getElementById('lastUpdate').textContent = lastD ? timeAgo(lastD) : '-';
+    }
+
+    function renderReports() {
+      recentReportsEl.innerHTML = floodReports.slice(-5).reverse().map(r => {
+        const cm = Math.round((r.water_level_m || 0) * 100);
+        const severityColor = cm > 120 ? 'red' : cm > 60 ? 'orange' : 'yellow';
+        const severityText  = cm > 120 ? 'สูง' : cm > 60 ? 'ปานกลาง' : 'ต่ำ';
+        return `
+          <div class="border-l-4 border-${severityColor}-500 pl-4 py-2">
+            <div class="flex justify-between items-start">
+              <div>
+                <h4 class="font-semibold text-gray-800">${r.address || `${r.lat}, ${r.lng}`}</h4>
+                <p class="text-sm text-gray-600">
+                  ระดับน้ำ: ${(r.water_level_m || 0).toFixed(2)} m |
+                  วัตถุ: ${r.object_type || '-'} |
+                  วันที่: ${thDateTime(r.date_iso)}
+                </p>
+                <p class="text-sm text-gray-500 mt-1">${r.description || '-'}</p>
+              </div>
+              <span class="text-xs bg-${severityColor}-100 text-${severityColor}-800 px-2 py-1 rounded-full">${severityText}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    objectTypeInput.addEventListener('change', () => {
+      if (objectTypeInput.value === 'อื่นๆ') customObjectDiv.classList.remove('hidden');
+      else { customObjectDiv.classList.add('hidden'); customObjectInput.value=''; }
+    });
+
+    // ===== Geolocation =====
+    document.getElementById('getLocationBtn').addEventListener('click', () => {
+      if (!navigator.geolocation) return showAlert('ไม่รองรับการขอตำแหน่ง', 'เบราว์เซอร์ของคุณไม่รองรับการใช้งานตำแหน่ง');
+      showLocationStatus('กำลังขอตำแหน่ง...', 'loading');
+      getLocationBtn.disabled = true;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude.toFixed(6);
+          const lng = pos.coords.longitude.toFixed(6);
+          locationInput.value = `${lat}, ${lng}`;
+          showLocationStatus('ได้รับตำแหน่งสำเร็จ', 'success');
+          getLocationBtn.disabled = false;
+          map.setView([+lat, +lng], 15);
+        },
+        () => { showLocationStatus('ไม่สามารถขอตำแหน่งได้', 'error'); getLocationBtn.disabled = false; },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    });
+
+    // ===== Pick on Map Modal =====
+    let pickMap, pickMarker, pickBaseOsm, pickBaseEsri, activeBase;
+    function openPickModal() {
+      openModal(pickModal);
+      setTimeout(() => {
+        if (!pickMap) {
+          pickMap = L.map('pickMap').setView(map.getCenter(), map.getZoom());
+          pickBaseOsm  = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19});
+          pickBaseEsri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19});
+          activeBase = pickBaseOsm.addTo(pickMap);
+
+          const setBase = (base) => { if (activeBase) pickMap.removeLayer(activeBase); activeBase = base.addTo(pickMap); };
+          pickBaseOsmBtn.onclick = () => setBase(pickBaseOsm);
+          pickBaseEsriBtn.onclick = () => setBase(pickBaseEsri);
+
+          pickMap.on('click', (e) => {
+            const { lat, lng } = e.latlng;
+            if (!pickMarker) pickMarker = L.marker(e.latlng, { draggable: true }).addTo(pickMap);
+            else pickMarker.setLatLng(e.latlng);
+            updatePicked(lat, lng);
+            pickMarker.on('dragend', () => {
+              const p = pickMarker.getLatLng();
+              updatePicked(p.lat, p.lng);
+            });
+            pickConfirm.disabled = false;
+          });
+        } else {
+          pickMap.invalidateSize();
+          pickMap.setView(map.getCenter(), map.getZoom());
+        }
+      }, 50);
+    }
+    function closePickModal() { closeModal(pickModal); }
+    function updatePicked(lat, lng) { pickedLatLngEl.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; }
+    pickOnMapBtn.addEventListener('click', openPickModal);
+    document.getElementById('pickCloseX').addEventListener('click', closePickModal);
+    document.getElementById('pickCancel').addEventListener('click', closePickModal);
+    pickModal.addEventListener('click', (e) => { if (e.target === pickModal) closePickModal(); });
+    pickConfirm.addEventListener('click', () => {
+      if (!pickMarker) return;
+      const p = pickMarker.getLatLng();
+      locationInput.value = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+      closePickModal();
+      showLocationStatus('เลือกพิกัดจากแผนที่เรียบร้อย', 'success');
+    });
+
+    // ===== File UI + validation =====
+    uploadArea.addEventListener('click', () => imageInput.click());
+    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', e => { e.preventDefault(); uploadArea.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+    imageInput.addEventListener('change', e => handleFiles(e.target.files));
+
+    function validateFile(file) {
+      if (!ALLOWED_MIME.includes(file.type)) { showAlert('ไฟล์ไม่รองรับ', `ชนิดไฟล์: ${file.type || 'unknown'} (รองรับ: JPG, PNG, WEBP)`); return false; }
+      const mb = file.size / (1024*1024);
+      if (mb > MAX_MB) { showAlert('ไฟล์มีขนาดใหญ่เกินกำหนด', `ขนาดสูงสุด ${MAX_MB} MB (ปัจจุบัน ${mb.toFixed(2)} MB)`); return false; }
+      return true;
+    }
+    function handleFiles(files) {
+      if (!files || !files.length) return;
+      const ok = validateFile(files[0]);
+      if (!ok) { imageInput.value = ''; fileInfo.textContent=''; return; }
+      uploadArea.innerHTML = `
+        <p class="text-lg text-green-700 mb-1">เลือกไฟล์เรียบร้อย</p>
+        <p class="text-sm text-gray-600">${files[0].name} (${(files[0].size/1024/1024).toFixed(2)} MB)</p>`;
+    }
+
+    // ===== Helpers =====
+    function parseLatLng(text) {
+      if (!text) return null;
+      const p = text.split(',').map(s => s.trim());
+      if (p.length !== 2) return null;
+      const lat = Number(p[0]), lng = Number(p[1]);
+      if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+      return { lat, lng };
+    }
+    function downloadBlob(content, filename, mime) {
+      const blob = new Blob([content], { type: mime || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+    }
+    function toCsv(rows, headers) {
+      const esc = (v) => { const s = (v==null) ? '' : String(v); return /[,"\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
+      const head = headers.map(esc).join(',');
+      const body = rows.map(r => headers.map(h => esc(r[h])).join(',')).join('\n');
+      return head + '\n' + body;
+    }
+
+    // ===== Submit -> API =====
+    submitBtn.addEventListener('click', async () => {
+      const loc = parseLatLng(locationInput.value.trim());
+      const objectType = objectTypeInput.value;
+      const finalObject = objectType === 'อื่นๆ' ? (customObjectInput.value.trim()) : objectType;
+      const description = (descriptionInput.value || '').trim();
+      const address = (addressInput.value || locationInput.value).trim();
+
+      if (!imageInput.files?.length) return showAlert('กรุณาเลือกไฟล์', 'โปรดเลือกภาพอย่างน้อยหนึ่งไฟล์');
+      if (!validateFile(imageInput.files[0])) return;
+      if (!loc) return showAlert('พิกัดไม่ถูกต้อง', 'กรุณากรอกตำแหน่งเป็น "lat, lng" เช่น 18.7883, 98.9853');
+      if (!finalObject) return showAlert('กรุณาระบุวัตถุ', 'โปรดเลือกหรือกรอกวัตถุที่ถ่าย');
+
+      // เก็บเวลาเป็น UTC ISO แล้วแสดงผลเป็นเวลาไทยใน UI/CSV
+      const nowIso = new Date().toISOString();
+
+      const fd = new FormData();
+      fd.append('image', imageInput.files[0]);
+      fd.append('lat', String(loc.lat));
+      fd.append('lng', String(loc.lng));
+      fd.append('date_iso', nowIso);
+      fd.append('object_type', finalObject);
+      fd.append('description', description);
+      fd.append('address', address);
+
+      submitBtn.disabled = true;
+      const prevText = submitBtn.textContent;
+      submitBtn.textContent = 'กำลังบันทึก...';
+
+      try {
+        const url = `${API_BASE}/api/report?skip_infer=${SKIP_INFER}`;
+        const res = await fetch(url, { method: 'POST', body: fd, mode: 'cors' });
+        const raw = await res.text();
+        let data; try { data = raw ? JSON.parse(raw) : null; } catch (e) { throw new Error(`การตอบกลับไม่ใช่ JSON (HTTP ${res.status}). ข้อมูล: ${raw.slice(0,300)}`); }
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${data?.message || raw.slice(0,300)}`);
+        if (!data?.ok) throw new Error(`API error: ${data?.message || 'ok=false'}`);
+
+        floodReports.push(data);
+        addReportToMap(data);
+
+        // ซูมไปยังจุดล่าสุดทันที
+        map.setView([data.lat, data.lng], 16);
+
+        updateStats();
+        renderReports();
+
+        // Reset
+        imageInput.value = '';
+        uploadArea.innerHTML = `
+          <p class="text-lg text-gray-700 mb-1">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+          <p class="text-sm text-gray-500">รองรับไฟล์ JPG, PNG, WEBP (ขนาดไม่เกิน 10MB)</p>`;
+
+        showAlert('บันทึกสำเร็จ', 'ข้อมูลของคุณได้รับการบันทึกเรียบร้อยแล้ว');
+      } catch (err) {
+        showAlert('บันทึกไม่สำเร็จ', String(err.message || err));
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = prevText;
+      }
+    });
+
+    // ===== โหลดรายงานเริ่มต้น =====
+    (async function initReports(){
+      try {
+        const res = await fetch(`${API_BASE}/api/reports?limit=200`);
+        const data = await res.json();
+        if (data?.ok && Array.isArray(data.items)) {
+          floodReports = data.items;
+          floodReports.forEach(addReportToMap);
+          fitMapToMarkers();
+          updateStats();
+          renderReports();
+        }
+      } catch (err) { showAlert('ไม่สามารถโหลดข้อมูลเริ่มต้น', String(err.message || err)); }
+    })();
+
+    // ===== Interpolation (IDW) + Clip =====
+    function computeIdwGrid(points, cellKm=0.25) {
+      if (!points || !points.length) return null;
+      const feats = points.map(p => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+        properties: { value: (p.water_level_m || 0) * 100 }
+      }));
+      const fc = { type:'FeatureCollection', features: feats };
+      return turf.interpolate(fc, cellKm, { gridType:'square', property:'value', units:'kilometers' });
+    }
+    function normalizeBoundary(gj) {
+      if (!gj) return null;
+      if (gj.type === 'Feature' && (gj.geometry?.type === 'Polygon' || gj.geometry?.type === 'MultiPolygon')) return gj;
+      const feats = (gj.type === 'FeatureCollection') ? gj.features : [gj];
+      const polys = feats.map(f => (f.type === 'Feature' ? f.geometry : f))
+        .filter(g => g && (g.type === 'Polygon' || g.type === 'MultiPolygon'))
+        .map(g => turf.feature(g));
+      if (!polys.length) return null;
+      let merged = polys[0];
+      for (let i=1; i<polys.length; i++) { try { merged = turf.union(merged, polys[i]); } catch {} }
+      return merged || polys[0];
+    }
+    function clipGridToBoundary(grid, boundary) {
+      if (!grid || !boundary) return grid;
+      const out = { type:'FeatureCollection', features: [] };
+      for (const cell of grid.features) {
+        try {
+          const inter = turf.intersect(cell, boundary);
+          if (inter) {
+            inter.properties = inter.properties || {};
+            inter.properties.value = cell.properties?.value ?? null;
+            out.features.push(inter);
+          }
+        } catch (_) {}
+      }
+      return out;
+    }
+    function renderIdw(grid) {
+      if (idwLayer) { map.removeLayer(idwLayer); idwLayer = null; }
+      lastIdwGeoJson = null;
+      if (!grid) { showAlert('ไม่สามารถคำนวณ Interpolation', 'ยังไม่มีจุดเพียงพอสำหรับคำนวณ'); return; }
+      let clipped = boundaryGeoJson ? clipGridToBoundary(grid, boundaryGeoJson) : grid;
+      if (!clipped.features?.length) clipped = grid;
+      lastIdwGeoJson = clipped;
+      idwLayer = L.geoJSON(clipped, {
+        pane: 'idwPane',
+        style: f => ({ color: colorByCm(f.properties.value), fillColor: colorByCm(f.properties.value), fillOpacity: 0.35, weight: 0 })
+      }).addTo(map);
+    }
+    document.getElementById('toggleIdw').addEventListener('click', () => {
+      if (!idwLayer && (!floodReports || floodReports.length === 0)) {
+        showAlert('ยังไม่มีข้อมูลจุด', 'เพิ่มอย่างน้อย 1 จุดก่อนจะแสดง Interpolation');
+        return;
+      }
+      if (idwLayer) { map.removeLayer(idwLayer); idwLayer = null; lastIdwGeoJson = null; return; }
+      const pts = floodReports
+        .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lng))
+        .map(r => ({ lat: r.lat, lng: r.lng, water_level_m: r.water_level_m || 0 }));
+      const grid = computeIdwGrid(pts, 0.25);
+      renderIdw(grid);
+    });
+
+    // ===== Export =====
+    exportCsvBtn.addEventListener('click', () => {
+      if (!floodReports.length) return showAlert('ไม่พบข้อมูล', 'ยังไม่มีข้อมูลรายงานสำหรับดาวน์โหลด');
+
+      // เติมคอลัมน์เวลาไทย
+      const enriched = floodReports.map(r => ({
+        ...r,
+        created_at_th: r.date_iso
+          ? new Date(r.date_iso).toLocaleString('th-TH', { timeZone:'Asia/Bangkok', hour12:false })
+          : ''
+      }));
+
+      const headers = ['lat','lng','date_iso','created_at_th','object_type','description','address','photo_url','water_level_m'];
+      const csv = toCsv(enriched, headers);
+      downloadBlob(csv, `flood_reports_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`, 'text/csv;charset=utf-8');
+    });
+
+    exportIdwBtn.addEventListener('click', () => {
+      if (!lastIdwGeoJson) {
+        const pts = floodReports.map(r => ({ lat: r.lat, lng: r.lng, water_level_m: r.water_level_m || 0 }));
+        const grid = computeIdwGrid(pts, 0.25);
+        if (!grid) return showAlert('ไม่สามารถดาวน์โหลด', 'ยังไม่มีข้อมูลเพียงพอสำหรับคำนวณ Interpolation');
+        lastIdwGeoJson = boundaryGeoJson ? clipGridToBoundary(grid, boundaryGeoJson) : grid;
+        if (!lastIdwGeoJson.features?.length) lastIdwGeoJson = grid;
+      }
+      downloadBlob(JSON.stringify(lastIdwGeoJson), `flood_interpolation_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.geojson`, 'application/geo+json;charset=utf-8');
+    });
+
+    // ===== Boundary =====
+    function addBoundary(rawGj) {
+      if (boundaryLayer) { map.removeLayer(boundaryLayer); boundaryLayer = null; }
+      const normalized = normalizeBoundary(rawGj);
+      if (!normalized) { showAlert('ขอบเขตไม่ถูกต้อง', 'ไฟล์ GeoJSON ต้องเป็น Polygon/MultiPolygon'); return; }
+      boundaryGeoJson = normalized;
+      boundaryLayer = L.geoJSON(boundaryGeoJson, {
+        pane: 'boundaryPane',
+        interactive: false,
+        style: { color: '#2563eb', weight: 2, fillOpacity: 0.05 }
+      }).addTo(map);
+      overlays['ขอบเขตเทศบาล'] = boundaryLayer;
+      document.querySelectorAll('.leaflet-control-layers').forEach(el => el.remove());
+      L.control.layers(baseLayers, overlays, { position: 'topright', collapsed: false }).addTo(map);
+      try { map.fitBounds(boundaryLayer.getBounds(), { padding: [20, 20] }); } catch {}
+    }
+    (async function tryLoadDefaultBoundary(){
+      try {
+        const res = await fetch(DEFAULT_BOUNDARY_URL, { cache: 'no-store' });
+        if (res.ok) { const gj = await res.json(); addBoundary(gj); }
+      } catch {}
+    })();
+  </script>
+</body>
+</html>
