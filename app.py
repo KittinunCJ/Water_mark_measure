@@ -6,41 +6,45 @@ from typing import List
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 
-# ====== โหลดไฟล์ .env ======
 from dotenv import load_dotenv
 
 # ====== ตั้งค่าโฟลเดอร์ ======
 BASE_DIR = Path(__file__).resolve().parent      # .../backend
-FRONTEND_DIR = BASE_DIR.parent                  # ⟵ root ของ repo (มี index.html)
+FRONTEND_DIR = BASE_DIR.parent                  # root ของ repo (มี index.html)
 UPLOAD_DIR = BASE_DIR / "uploads"
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_FILE = DATA_DIR / "reports.jsonl"
 
-# ถ้าเผื่ออนาคตไฟล์ย้ายตำแหน่ง: fallback เป็นโฟลเดอร์เดียวกับ app.py
+# fallback เผื่อย้ายไฟล์ในอนาคต
 if not (FRONTEND_DIR / "index.html").exists():
     FRONTEND_DIR = BASE_DIR
 
 # โหลด environment จาก backend/.env
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
-# ====== สมการปรับแก้ค่า (y' = 0.9553*x + 0.0325) ======
-def calibrate(level_m: float, ndigits: int = 2) -> float:
-    if level_m is None or (isinstance(level_m, float) and math.isnan(level_m)):
-        return level_m
+# ====== Utilities ======
+def _is_bad_number(x: float) -> bool:
+    return isinstance(x, float) and (math.isnan(x) or math.isinf(x))
+
+# สมการปรับแก้ค่า (y' = 0.9553*x + 0.0325) + กัน NaN/Inf
+def calibrate(level_m: float, ndigits: int = 2):
+    if level_m is None or _is_bad_number(level_m):
+        return None
     y = 0.9553 * float(level_m) + 0.0325
+    if _is_bad_number(y):
+        return None
     return round(y, ndigits)
 
 # ====== โหลดตัวทำนายจาก infer_service ======
+# (ตรง ๆ ตามของเดิม; ถ้าลงโมเดลไม่ครบจะ raise ในตอนเรียกใช้งาน)
 try:
-    # กรณีรันเป็นแพ็กเกจ (เช่น uvicorn backend.app:app)
     from .infer_service import predict_height_m
 except Exception:
     try:
-        # กรณีรันไฟล์ตรง ๆ (python app.py)
         from infer_service import predict_height_m
     except Exception:
         def predict_height_m(_):
@@ -109,10 +113,12 @@ async def create_report(
         try:
             water_level_m = predict_height_m(str(out_path))
         except Exception:
-            water_level_m = float("nan")
+            water_level_m = None  # ❗ อย่าใช้ float("nan")
 
-    # 3) ปรับแก้ค่า
+    # 3) ปรับแก้ค่าและกัน NaN/Inf
     water_level_m = calibrate(water_level_m)
+    if _is_bad_number(water_level_m):
+        water_level_m = None
 
     rec = {
         "lat": float(lat), "lng": float(lng),
@@ -126,8 +132,15 @@ async def create_report(
     _save_record(rec)
     return JSONResponse({"ok": True, **rec})
 
-# ✅ เสิร์ฟหน้าเว็บจาก root ของ repo (หรือ fallback เป็นโฟลเดอร์เดียวกับ app.py)
-app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+# ====== หน้าเว็บหลัก (เสิร์ฟตรง ๆ ให้เบา/เสถียร) ======
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+# ถ้ามีโฟลเดอร์ static จริงใน root ให้เสิร์ฟเพิ่มได้
+STATIC_DIR = FRONTEND_DIR / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ---- รันบนพอร์ต 7860 เวลาเรียกตรง ๆ ----
 if __name__ == "__main__":
