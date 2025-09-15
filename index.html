@@ -35,7 +35,11 @@
   </style>
 
   <script>
+    // ถ้า frontend/backed อยู่โดเมนเดียวกัน ให้เว้นว่าง ("")
+    // ถ้าแยก service ให้ใส่ URL เต็ม เช่น
+    // const API_BASE = "https://water-mark-measure.onrender.com";
     const API_BASE = "";
+
     const SKIP_INFER = new URLSearchParams(location.search).get("debug") === "1" ? 1 : 0;
     const MAX_MB = 10;
     const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
@@ -48,12 +52,10 @@
   <header class="bg-blue-600 text-white shadow">
     <div class="container mx-auto px-4 py-5">
       <div class="flex items-center justify-between">
-        <!-- ซ้าย: ชื่อระบบ (ไม่มีโลโก้) -->
         <div>
           <h1 class="text-2xl font-semibold">ระบบรวบรวมร่องรอยน้ำท่วม</h1>
           <p class="text-blue-100 mt-1">รวบรวมข้อมูลจากภาพถ่ายภาคสนามเพื่อสร้างแผนที่ระดับน้ำท่วมย้อนหลัง</p>
         </div>
-        <!-- ขวา: ปุ่มดาวน์โหลด + ตัวเลข -->
         <div class="flex items-center gap-2">
           <button id="exportBtn" class="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/20">ดาวน์โหลดข้อมูล</button>
           <div class="text-right ml-3">
@@ -342,13 +344,21 @@
     }
 
     function addReportToMap(report) {
-      const cm = Math.round((report.water_level_m || 0) * 100);
-      const color = severityColorByCm(cm);
-      const marker = L.circleMarker([report.lat, report.lng], { radius: 8, color, fillColor: color, fillOpacity: 0.85 })
+      const val = (report.water_level_m ?? report.water_level_raw_m);
+      const hasVal = (val != null && isFinite(val));
+      const cm = hasVal ? Math.round(val * 100) : null;
+      const color = hasVal ? severityColorByCm(cm) : '#6b7280'; // เทา ถ้าไม่มีค่า
+
+      const marker = L.circleMarker([report.lat, report.lng], {
+          radius: 8,
+          color,
+          fillColor: color,
+          fillOpacity: 0.85
+        })
         .bindPopup(`
           <div style="font-size:14px;">
             <div><b>พิกัด:</b> ${report.address || `${report.lat}, ${report.lng}`}</div>
-            <div><b>ความสูงรอยน้ำ:</b> ${(report.water_level_m || 0).toFixed(2)} m</div>
+            <div><b>ความสูงรอยน้ำ:</b> ${hasVal ? Number(val).toFixed(2) + ' m' : '—'}</div>
             <div><b>วัตถุที่ถ่าย:</b> ${report.object_type || '-'}</div>
             <div><b>รายละเอียดเพิ่มเติม:</b> ${report.description || '-'}</div>
             <div><b>วันที่เก็บข้อมูล:</b> ${thDateTime(report.date_iso)}</div>
@@ -393,17 +403,21 @@
 
     function updateStats() {
       totalReportsEl.textContent = floodReports.length;
-      if (!floodReports.length) {
+      const nums = floodReports
+        .map(r => r.water_level_m ?? r.water_level_raw_m)
+        .filter(v => v != null && isFinite(v));
+      if (!nums.length) {
         document.getElementById('avgLevel').textContent = 0;
         document.getElementById('highRisk').textContent = 0;
-        document.getElementById('totalAreas').textContent = 0;
+        document.getElementById('totalAreas').textContent = floodReports.length;
         document.getElementById('lastUpdate').textContent = '-';
         return;
       }
-      const avg_m = floodReports.reduce((s, r) => s + (r.water_level_m || 0), 0) / floodReports.length;
+      const avg_m = nums.reduce((s, v) => s + v, 0) / nums.length;
       const avg_cm = Math.round(avg_m * 100);
       document.getElementById('avgLevel').textContent = avg_cm;
-      const highRisk = floodReports.filter(r => (r.water_level_m || 0) * 100 > 120).length;
+
+      const highRisk = nums.filter(v => v * 100 > 120).length;
       document.getElementById('highRisk').textContent = highRisk;
       document.getElementById('totalAreas').textContent = floodReports.length;
 
@@ -413,16 +427,18 @@
 
     function renderReports() {
       recentReportsEl.innerHTML = floodReports.slice(-5).reverse().map(r => {
-        const cm = Math.round((r.water_level_m || 0) * 100);
-        const severityColor = cm > 120 ? 'red' : cm > 60 ? 'orange' : 'yellow';
-        const severityText  = cm > 120 ? 'สูง' : cm > 60 ? 'ปานกลาง' : 'ต่ำ';
+        const v = r.water_level_m ?? r.water_level_raw_m;
+        const hasVal = (v != null && isFinite(v));
+        const cm = hasVal ? Math.round(v * 100) : null;
+        const severityColor = hasVal ? (cm > 120 ? 'red' : cm > 60 ? 'orange' : 'yellow') : 'gray';
+        const severityText  = hasVal ? (cm > 120 ? 'สูง' : cm > 60 ? 'ปานกลาง' : 'ต่ำ') : 'ไม่มีค่า';
         return `
           <div class="border-l-4 border-${severityColor}-500 pl-4 py-2">
             <div class="flex justify-between items-start">
               <div>
                 <h4 class="font-semibold text-gray-800">${r.address || `${r.lat}, ${r.lng}`}</h4>
                 <p class="text-sm text-gray-600">
-                  ระดับน้ำ: ${(r.water_level_m || 0).toFixed(2)} m |
+                  ระดับน้ำ: ${hasVal ? v.toFixed(2) : '—'} m |
                   วัตถุ: ${r.object_type || '-'} |
                   วันที่: ${thDateTime(r.date_iso)}
                 </p>
@@ -562,7 +578,6 @@
       if (!loc) return showAlert('พิกัดไม่ถูกต้อง', 'กรุณากรอกตำแหน่งเป็น "lat, lng" เช่น 18.7883, 98.9853');
       if (!finalObject) return showAlert('กรุณาระบุวัตถุ', 'โปรดเลือกหรือกรอกวัตถุที่ถ่าย');
 
-      // เก็บเวลาเป็น UTC ISO แล้วแสดงผลเป็นเวลาไทยใน UI/CSV
       const nowIso = new Date().toISOString();
 
       const fd = new FormData();
@@ -588,8 +603,6 @@
 
         floodReports.push(data);
         addReportToMap(data);
-
-        // ซูมไปยังจุดล่าสุดทันที
         map.setView([data.lat, data.lng], 16);
 
         updateStats();
@@ -613,7 +626,8 @@
     // ===== โหลดรายงานเริ่มต้น =====
     (async function initReports(){
       try {
-        const res = await fetch(`${API_BASE}/api/reports?limit=200`);
+        const res = await fetch(`${API_BASE}/api/reports?limit=200`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data?.ok && Array.isArray(data.items)) {
           floodReports = data.items;
@@ -631,7 +645,7 @@
       const feats = points.map(p => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
-        properties: { value: (p.water_level_m || 0) * 100 }
+        properties: { value: p.water_level_m * 100 }
       }));
       const fc = { type:'FeatureCollection', features: feats };
       return turf.interpolate(fc, cellKm, { gridType:'square', property:'value', units:'kilometers' });
@@ -682,8 +696,10 @@
       }
       if (idwLayer) { map.removeLayer(idwLayer); idwLayer = null; lastIdwGeoJson = null; return; }
       const pts = floodReports
-        .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lng))
-        .map(r => ({ lat: r.lat, lng: r.lng, water_level_m: r.water_level_m || 0 }));
+        .map(r => r.water_level_m ?? r.water_level_raw_m)
+        .map((v, i) => ({ v, i }))
+        .filter(o => o.v != null && isFinite(o.v))
+        .map(o => ({ lat: floodReports[o.i].lat, lng: floodReports[o.i].lng, water_level_m: o.v }));
       const grid = computeIdwGrid(pts, 0.25);
       renderIdw(grid);
     });
@@ -692,7 +708,6 @@
     exportCsvBtn.addEventListener('click', () => {
       if (!floodReports.length) return showAlert('ไม่พบข้อมูล', 'ยังไม่มีข้อมูลรายงานสำหรับดาวน์โหลด');
 
-      // เติมคอลัมน์เวลาไทย
       const enriched = floodReports.map(r => ({
         ...r,
         created_at_th: r.date_iso
@@ -707,7 +722,11 @@
 
     exportIdwBtn.addEventListener('click', () => {
       if (!lastIdwGeoJson) {
-        const pts = floodReports.map(r => ({ lat: r.lat, lng: r.lng, water_level_m: r.water_level_m || 0 }));
+        const pts = floodReports
+          .map(r => r.water_level_m ?? r.water_level_raw_m)
+          .map((v, i) => ({ v, i }))
+          .filter(o => o.v != null && isFinite(o.v))
+          .map(o => ({ lat: floodReports[o.i].lat, lng: floodReports[o.i].lng, water_level_m: o.v }));
         const grid = computeIdwGrid(pts, 0.25);
         if (!grid) return showAlert('ไม่สามารถดาวน์โหลด', 'ยังไม่มีข้อมูลเพียงพอสำหรับคำนวณ Interpolation');
         lastIdwGeoJson = boundaryGeoJson ? clipGridToBoundary(grid, boundaryGeoJson) : grid;
