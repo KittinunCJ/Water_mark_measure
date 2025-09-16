@@ -48,6 +48,8 @@ def calibrate(level_m: float, ndigits: int = 2) -> float:
 # ====== Inference loader ======
 predict_height_m = None
 predict_height_debug = None
+infer_status_fn = None
+
 try:
     # uvicorn backend.app:app
     from .infer_service import predict_height_m as _phm
@@ -57,6 +59,11 @@ try:
         predict_height_debug = _phd
     except Exception:
         predict_height_debug = None
+    try:
+        from .infer_service import infer_status as _istat
+        infer_status_fn = _istat
+    except Exception:
+        infer_status_fn = None
 except Exception:
     try:
         # python backend/app.py
@@ -67,11 +74,17 @@ except Exception:
             predict_height_debug = _phd
         except Exception:
             predict_height_debug = None
+        try:
+            from infer_service import infer_status as _istat
+            infer_status_fn = _istat
+        except Exception:
+            infer_status_fn = None
     except Exception:
         def _not_ready(*_, **__):
             raise RuntimeError("ยังโหลดโมเดลไม่สำเร็จ (โปรดวางไฟล์ weights และปรับ ENV ให้ครบ)")
         predict_height_m = _not_ready
         predict_height_debug = None
+        infer_status_fn = None
 
 # ====== App ======
 app = FastAPI(title="Flood Mark API")
@@ -114,7 +127,20 @@ def _load_records(limit: int = 200) -> List[dict]:
 def health():
     # infer_ready = true ถ้ามีฟังก์ชัน predict_height_m และไม่ใช่ placeholder
     infer_ready = callable(predict_height_m) and predict_height_m.__name__ != "_not_ready"
-    return {"ok": True, "ts": int(time.time()), "infer_ready": infer_ready}
+    # ถ้ามี infer_status_fn ให้แนบสถานะละเอียด ๆ ไปด้วย
+    status = infer_status_fn() if callable(infer_status_fn) else {"model_ready": infer_ready}
+    return {"ok": True, "ts": int(time.time()), "infer_ready": infer_ready, "status": status}
+
+@app.get("/api/infer_status")
+def api_infer_status():
+    if not callable(infer_status_fn):
+        # อย่างน้อยบอกว่า import ไม่ได้
+        return {"ok": False, "error": "infer_service not ready or infer_status() missing"}
+    try:
+        data = infer_status_fn()
+        return data | {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": f"{e.__class__.__name__}: {e}"}
 
 @app.get("/api/reports")
 def get_reports(limit: int = 200):
@@ -162,7 +188,7 @@ async def create_report(
     _save_record(rec)
     return JSONResponse({"ok": True, **rec})
 
-# -------- NEW: debug infer endpoint --------
+# -------- Debug infer endpoint --------
 @app.post("/api/debug_infer")
 async def debug_infer(image: UploadFile = File(...)):
     """
@@ -172,7 +198,6 @@ async def debug_infer(image: UploadFile = File(...)):
     out_path = UPLOAD_DIR / safe_name
     out_path.write_bytes(await image.read())
 
-    # ถ้ายังไม่มีฟังก์ชันหรือยังไม่พร้อม -> ส่งสถานะ ok:false ออกไป
     if not callable(predict_height_debug):
         return JSONResponse(
             {"ok": False, "photo_url": f"/uploads/{safe_name}", "error": "infer_service not ready"},
