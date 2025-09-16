@@ -46,18 +46,32 @@ def calibrate(level_m: float, ndigits: int = 2) -> float:
     return round(y, ndigits)
 
 # ====== Inference loader ======
+predict_height_m = None
+predict_height_debug = None
 try:
     # uvicorn backend.app:app
-    from .infer_service import predict_height_m, predict_height_debug
+    from .infer_service import predict_height_m as _phm
+    predict_height_m = _phm
+    try:
+        from .infer_service import predict_height_debug as _phd
+        predict_height_debug = _phd
+    except Exception:
+        predict_height_debug = None
 except Exception:
     try:
         # python backend/app.py
-        from infer_service import predict_height_m, predict_height_debug
+        from infer_service import predict_height_m as _phm
+        predict_height_m = _phm
+        try:
+            from infer_service import predict_height_debug as _phd
+            predict_height_debug = _phd
+        except Exception:
+            predict_height_debug = None
     except Exception:
-        def predict_height_m(_):
+        def _not_ready(*_, **__):
             raise RuntimeError("ยังโหลดโมเดลไม่สำเร็จ (โปรดวางไฟล์ weights และปรับ ENV ให้ครบ)")
-        def predict_height_debug(_):
-            return {"ok": False, "error": "infer_service not ready"}
+        predict_height_m = _not_ready
+        predict_height_debug = None
 
 # ====== App ======
 app = FastAPI(title="Flood Mark API")
@@ -98,7 +112,9 @@ def _load_records(limit: int = 200) -> List[dict]:
 # ====== API ======
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ts": int(time.time())}
+    # infer_ready = true ถ้ามีฟังก์ชัน predict_height_m และไม่ใช่ placeholder
+    infer_ready = callable(predict_height_m) and predict_height_m.__name__ != "_not_ready"
+    return {"ok": True, "ts": int(time.time()), "infer_ready": infer_ready}
 
 @app.get("/api/reports")
 def get_reports(limit: int = 200):
@@ -146,22 +162,34 @@ async def create_report(
     _save_record(rec)
     return JSONResponse({"ok": True, **rec})
 
-# ====== DEBUG: ยิงดูสาเหตุที่ infer เป็น NaN ======
+# -------- NEW: debug infer endpoint --------
 @app.post("/api/debug_infer")
 async def debug_infer(image: UploadFile = File(...)):
     """
-    คืนข้อมูลช่วยวิเคราะห์:
-    - มีน้ำไหม / เส้นน้ำเจอไหม
-    - feature อ้างอิงที่ใช้
-    - ค่าทำนายก่อน/หลังปัด
+    เซฟรูปแล้วรัน predict_height_debug (ถ้ามี) คืนรายละเอียดดีบั๊กทั้งหมด
     """
     safe_name = f"_debug_{int(time.time()*1000)}_{image.filename.replace(' ', '_')}"
     out_path = UPLOAD_DIR / safe_name
     out_path.write_bytes(await image.read())
 
-    info = predict_height_debug(str(out_path))
-    payload = {"ok": True, "photo_url": f"/uploads/{safe_name}", **(info or {})}
-    return JSONResponse(_sanitize_for_json(payload))
+    # ถ้ายังไม่มีฟังก์ชันหรือยังไม่พร้อม -> ส่งสถานะ ok:false ออกไป
+    if not callable(predict_height_debug):
+        return JSONResponse(
+            {"ok": False, "photo_url": f"/uploads/{safe_name}", "error": "infer_service not ready"},
+            status_code=200
+        )
+
+    try:
+        dbg = predict_height_debug(str(out_path))
+        return JSONResponse(
+            {"ok": bool(dbg.get("ok")), "photo_url": f"/uploads/{safe_name}", "debug": dbg},
+            status_code=200
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False, "photo_url": f"/uploads/{safe_name}", "error": f"{e.__class__.__name__}: {e}"},
+            status_code=200
+        )
 
 # ====== Static frontend ======
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
