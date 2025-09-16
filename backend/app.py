@@ -21,13 +21,22 @@ DB_FILE = DATA_DIR / "reports.jsonl"
 
 # กันกรณี build/boot แรกที่ frontend ยังไม่มีไฟล์ -> อย่าทำให้แอปล่ม
 if not (FRONTEND_DIR / "index.html").exists():
-    # เสิร์ฟจาก root ชั่วคราว (ควรมี frontend/ หลัง deploy)
     FRONTEND_DIR = ROOT_DIR
 
 # ====== Env (.env ได้ทั้งที่ root และ backend) ======
-# โหลด root ก่อน, แล้วค่อย backend (ค่าที่ซ้ำจะถูก override ด้วยตัวหลัง)
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv(BASE_DIR / ".env")
+
+# ====== JSON-safe helper ======
+def _sanitize_for_json(obj):
+    """แทน NaN/Inf ด้วย None เพื่อให้ json.dumps ทำงานได้"""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
 
 # ====== Calibration: y' = 0.9553*x + 0.0325 ======
 def calibrate(level_m: float, ndigits: int = 2) -> float:
@@ -64,8 +73,10 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # ====== Helpers ======
 def _save_record(rec: dict):
+    rec = _sanitize_for_json(rec)
     with DB_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        # บังคับห้าม NaN/Inf ในไฟล์ถาวร
+        f.write(json.dumps(rec, ensure_ascii=False, allow_nan=False) + "\n")
 
 def _load_records(limit: int = 200) -> List[dict]:
     if not DB_FILE.exists():
@@ -89,7 +100,9 @@ def health():
 
 @app.get("/api/reports")
 def get_reports(limit: int = 200):
-    return {"ok": True, "items": _load_records(limit=limit)}
+    items = _load_records(limit=limit)
+    items = [_sanitize_for_json(x) for x in items]  # กัน record เก่า ๆ ที่มี NaN
+    return {"ok": True, "items": items}
 
 @app.post("/api/report")
 async def create_report(
@@ -127,6 +140,7 @@ async def create_report(
         "photo_url": f"/uploads/{safe_name}",
         "water_level_m": water_level_m
     }
+    rec = _sanitize_for_json(rec)  # << สำคัญ
     _save_record(rec)
     return JSONResponse({"ok": True, **rec})
 
