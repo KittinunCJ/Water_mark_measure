@@ -48,14 +48,16 @@ def calibrate(level_m: float, ndigits: int = 2) -> float:
 # ====== Inference loader ======
 try:
     # uvicorn backend.app:app
-    from .infer_service import predict_height_m
+    from .infer_service import predict_height_m, predict_height_debug
 except Exception:
     try:
         # python backend/app.py
-        from infer_service import predict_height_m
+        from infer_service import predict_height_m, predict_height_debug
     except Exception:
         def predict_height_m(_):
             raise RuntimeError("ยังโหลดโมเดลไม่สำเร็จ (โปรดวางไฟล์ weights และปรับ ENV ให้ครบ)")
+        def predict_height_debug(_):
+            return {"ok": False, "error": "infer_service not ready"}
 
 # ====== App ======
 app = FastAPI(title="Flood Mark API")
@@ -143,6 +145,23 @@ async def create_report(
     rec = _sanitize_for_json(rec)  # << สำคัญ
     _save_record(rec)
     return JSONResponse({"ok": True, **rec})
+
+# ====== DEBUG: ยิงดูสาเหตุที่ infer เป็น NaN ======
+@app.post("/api/debug_infer")
+async def debug_infer(image: UploadFile = File(...)):
+    """
+    คืนข้อมูลช่วยวิเคราะห์:
+    - มีน้ำไหม / เส้นน้ำเจอไหม
+    - feature อ้างอิงที่ใช้
+    - ค่าทำนายก่อน/หลังปัด
+    """
+    safe_name = f"_debug_{int(time.time()*1000)}_{image.filename.replace(' ', '_')}"
+    out_path = UPLOAD_DIR / safe_name
+    out_path.write_bytes(await image.read())
+
+    info = predict_height_debug(str(out_path))
+    payload = {"ok": True, "photo_url": f"/uploads/{safe_name}", **(info or {})}
+    return JSONResponse(_sanitize_for_json(payload))
 
 # ====== Static frontend ======
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
