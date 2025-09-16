@@ -30,14 +30,16 @@ import torch.nn as nn
 import torchvision.transforms as T
 import torchvision.models as models
 from ultralytics import YOLO
+from pathlib import Path
 
 # ===== DEFAULT PATHS (แก้ให้ตรงเครื่องคุณ) =====
-DEFAULT_WEIGHTS   = r"E:\499_cnx_flood_detect\YOLO_Flood_seg\runs\segment\train_PinFlood_segment\weights\best.pt"
-DEFAULT_IMAGE_DIR = r"E:\499_cnx_flood_detect\YOLO_Flood_seg\Pin_Flood\remove_IQR_outlier_Pinflood_dataset\images\val"
-DEFAULT_CKPT      = r"E:\499_cnx_flood_detect\YOLO_Flood_seg\Pin_Flood\modelres34_out\fusion_resnet34_best.pt"  # ckpt ที่เทรนด้วย res34 (มี meta backbone ใน ckpt)
-DEFAULT_SCALER    = r"E:\499_cnx_flood_detect\YOLO_Flood_seg\Pin_Flood\modelres34_out\scaler.json"               # ไม่มีก็รันได้ (ข้าม scaling)
-DEFAULT_OUT       = r"E:\499_cnx_flood_detect\YOLO_Flood_seg\Pin_Flood\Prediction\result_modelmk1_res34\val2.2_predictions_Calib_scaled.csv"
-DEFAULT_GT        = r"E:\499_cnx_flood_detect\YOLO_Flood_seg\Pin_Flood\All_Pin_Flood.csv"
+ROOT = Path(__file__).resolve().parent  # = backend/
+DEFAULT_WEIGHTS   = str(ROOT / "weights" / "best.pt")
+DEFAULT_IMAGE_DIR = str(ROOT / "sample_images")            # จะใช้หรือไม่ใช้ก็ได้
+DEFAULT_CKPT      = str(ROOT / "weights" / "fusion_resnet34_best.pt")
+DEFAULT_SCALER    = str(ROOT / "weights" / "scaler.json")
+DEFAULT_OUT       = str(ROOT / "out.csv")
+DEFAULT_GT        = ""  # ถ้าไม่มี GT ก็ปล่อยว่าง
 
 WATER_CLASS = "Water_mark"
 REF_CLASSES = ["Electric_pole","Brick","Motorcycle","Sedan_car","Pickup_car","SUV_car","Van_car","Pylon"]
@@ -491,3 +493,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
