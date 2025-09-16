@@ -11,20 +11,23 @@ from dotenv import load_dotenv
 
 # ====== Path setup ======
 BASE_DIR = Path(__file__).resolve().parent            # .../backend
-FRONTEND_DIR = BASE_DIR.parent / "frontend"           # .../frontend
+ROOT_DIR = BASE_DIR.parent                            # repo root
+FRONTEND_DIR = ROOT_DIR / "frontend"                  # .../frontend
 UPLOAD_DIR = BASE_DIR / "uploads"
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_FILE = DATA_DIR / "reports.jsonl"
 
-# กันกรณี build ขั้นแรกที่ frontend ยังไม่มีไฟล์
+# กันกรณี build/boot แรกที่ frontend ยังไม่มีไฟล์ -> อย่าทำให้แอปล่ม
 if not (FRONTEND_DIR / "index.html").exists():
-    # เสิร์ฟจาก root (กัน error) แต่หลัง deploy จริงควรมี frontend/
-    FRONTEND_DIR = BASE_DIR.parent
+    # เสิร์ฟจาก root ชั่วคราว (ควรมี frontend/ หลัง deploy)
+    FRONTEND_DIR = ROOT_DIR
 
-# ====== Env ======
-load_dotenv(dotenv_path=BASE_DIR / ".env")
+# ====== Env (.env ได้ทั้งที่ root และ backend) ======
+# โหลด root ก่อน, แล้วค่อย backend (ค่าที่ซ้ำจะถูก override ด้วยตัวหลัง)
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(BASE_DIR / ".env")
 
 # ====== Calibration: y' = 0.9553*x + 0.0325 ======
 def calibrate(level_m: float, ndigits: int = 2) -> float:
