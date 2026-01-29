@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="th">
+<html lang="th" class="h-full">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -7,7 +7,7 @@
 
   <!-- Tailwind + Font -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Athiti:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
   <!-- Leaflet CSS/JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -22,24 +22,275 @@
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
 
   <style>
-    body { font-family: 'Sarabun', sans-serif; }
-    .upload-area { border: 2px dashed #3b82f6; transition: all .3s; }
-    .upload-area:hover { border-color:#1d4ed8; background:#eff6ff; }
-    .upload-area.dragover { border-color:#1d4ed8; background:#dbeafe; }
+    html, body { height: 100%; }
+    body {
+      box-sizing: border-box;
+      font-family: 'Athiti', sans-serif;
+      background: linear-gradient(135deg, #f8fafc 0%, #e0f2fe 30%, #f1f5f9 70%, #e2e8f0 100%);
+      color: #0f172a;
+      position: relative;
+      overflow-x: hidden;
+    }
 
-    /* Modal */
-    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 2000; display: none; }
+    /* ===== Ambient glow blobs ===== */
+    body::before, body::after{
+      content:"";
+      position: fixed;
+      width: 560px;
+      height: 560px;
+      filter: blur(70px);
+      opacity: .35;
+      z-index: -1;
+      pointer-events: none;
+      border-radius: 999px;
+      transform: translateZ(0);
+      animation: floaty 10s ease-in-out infinite;
+    }
+    body::before{
+      left: -160px;
+      top: -200px;
+      background: radial-gradient(circle at 30% 30%, rgba(59,130,246,.75), rgba(6,182,212,.35), transparent 70%);
+    }
+    body::after{
+      right: -200px;
+      bottom: -240px;
+      background: radial-gradient(circle at 40% 40%, rgba(99,102,241,.65), rgba(96,165,250,.35), transparent 70%);
+      animation-delay: -4s;
+    }
+    @keyframes floaty{
+      0%,100%{ transform: translateY(0) translateX(0) scale(1); }
+      50%{ transform: translateY(18px) translateX(12px) scale(1.04); }
+    }
+
+    /* ---- Glass / 3D Cards ---- */
+    .card-3d {
+      background: rgba(255, 255, 255, 0.95);
+      border: 2px solid transparent;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.95)),
+        linear-gradient(135deg, #60a5fa, #3b82f6, #06b6d4);
+      background-origin: border-box;
+      background-clip: padding-box, border-box;
+      box-shadow: 0 10px 40px rgba(59, 130, 246, 0.15), 0 0 60px rgba(96, 165, 250, 0.08);
+      backdrop-filter: blur(20px);
+      transition: all 0.4s ease;
+    }
+    .card-3d:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 20px 60px rgba(59, 130, 246, 0.25), 0 0 80px rgba(96, 165, 250, 0.15);
+    }
+
+    .map-container {
+      background: linear-gradient(135deg, rgba(224, 242, 254, 0.8) 0%, rgba(241, 245, 249, 0.9) 100%);
+      border: 2px solid rgba(59, 130, 246, 0.3);
+      box-shadow: inset 0 2px 30px rgba(96, 165, 250, 0.15), 0 0 40px rgba(59, 130, 246, 0.1);
+      backdrop-filter: blur(20px);
+    }
+
+    /* ---- Upload area ---- */
+    .upload-area {
+      border: 3px dashed rgba(96, 165, 250, 0.4);
+      transition: all 0.4s ease;
+      background: rgba(224, 242, 254, 0.3);
+      backdrop-filter: blur(15px);
+      box-shadow: inset 0 0 30px rgba(59, 130, 246, 0.08);
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+    .upload-area::after{
+      content:"";
+      position:absolute;
+      inset:-120px;
+      background: radial-gradient(circle, rgba(255,255,255,.35) 0%, transparent 55%);
+      transform: translateX(-40%);
+      transition: transform .6s ease;
+      pointer-events:none;
+    }
+    .upload-area:hover::after{ transform: translateX(10%); }
+    .upload-area:hover {
+      border-color: rgba(59, 130, 246, 0.7);
+      background: rgba(224, 242, 254, 0.5);
+      transform: scale(1.02);
+      box-shadow: 0 0 40px rgba(96, 165, 250, 0.25), inset 0 0 40px rgba(59, 130, 246, 0.12);
+    }
+    .upload-area.dragover {
+      border-color: #3b82f6;
+      background: rgba(224, 242, 254, 0.7);
+      transform: scale(1.05);
+      box-shadow: 0 0 60px rgba(59, 130, 246, 0.4);
+    }
+
+    /* ---- Buttons / Inputs ---- */
+    .btn-3d {
+      box-shadow: 0 0 30px rgba(59, 130, 246, 0.35), 0 8px 20px rgba(96, 165, 250, 0.25);
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      border: none;
+    }
+    .btn-3d::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.4) 0%, transparent 70%);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      transition: width 0.6s, height 0.6s;
+    }
+    .btn-3d:hover::before { width: 320px; height: 320px; }
+    .btn-3d:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 0 50px rgba(59, 130, 246, 0.55), 0 15px 40px rgba(96, 165, 250, 0.45);
+    }
+    .btn-3d:active { transform: translateY(-2px); box-shadow: 0 0 25px rgba(59, 130, 246, 0.45); }
+
+    .input-3d {
+      background: rgba(255, 255, 255, 0.9);
+      border: 2px solid rgba(96, 165, 250, 0.3);
+      color: #0f172a;
+      box-shadow: inset 0 2px 8px rgba(59, 130, 246, 0.08);
+      transition: all 0.3s ease;
+      font-weight: 500;
+    }
+    .input-3d:focus {
+      background: rgba(255, 255, 255, 1);
+      border-color: rgba(59, 130, 246, 0.6);
+      box-shadow: 0 0 30px rgba(96, 165, 250, 0.3), inset 0 2px 8px rgba(59, 130, 246, 0.08);
+      outline: none;
+    }
+
+    /* ---- Header ---- */
+    .header-gradient {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(224, 242, 254, 0.95) 50%, rgba(241, 245, 249, 0.98) 100%);
+      box-shadow: 0 8px 40px rgba(59, 130, 246, 0.15), 0 0 60px rgba(96, 165, 250, 0.1);
+      border-bottom: 2px solid rgba(96, 165, 250, 0.2);
+      backdrop-filter: blur(20px);
+    }
+
+    /* ---- Stat cards ---- */
+    .stat-card {
+      background: rgba(255, 255, 255, 0.95);
+      border: 2px solid transparent;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.95)),
+        linear-gradient(135deg, #60a5fa, #06b6d4);
+      background-origin: border-box;
+      background-clip: padding-box, border-box;
+      box-shadow: 0 0 30px rgba(59, 130, 246, 0.15), 0 8px 20px rgba(96, 165, 250, 0.1);
+      backdrop-filter: blur(20px);
+      transition: all 0.4s ease;
+    }
+    .stat-card:hover {
+      transform: translateY(-8px) scale(1.05);
+      box-shadow: 0 0 60px rgba(59, 130, 246, 0.3), 0 20px 50px rgba(96, 165, 250, 0.2);
+    }
+
+    /* ---- Neon border hover ---- */
+    .neon-border { position: relative; }
+    .neon-border::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      background: linear-gradient(45deg, #6366f1, #818cf8, #a5b4fc, #818cf8, #6366f1);
+      border-radius: inherit;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      z-index: -1;
+      animation: neonRotate 3s linear infinite;
+      background-size: 200% 200%;
+    }
+    .neon-border:hover::before { opacity: 0.7; }
+    @keyframes neonRotate {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    /* ===== Section title with icon ===== */
+    .section-head{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      margin-bottom: 1rem;
+    }
+    .section-icon{
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: linear-gradient(135deg, rgba(59,130,246,.16), rgba(6,182,212,.14));
+      border: 1px solid rgba(59,130,246,.25);
+      box-shadow: 0 0 30px rgba(59,130,246,.18);
+      backdrop-filter: blur(18px);
+      flex: 0 0 auto;
+    }
+    .section-title{
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: .2px;
+      background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 45%, #06b6d4 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin: 0;
+      line-height: 1.2;
+    }
+    .section-sub{
+      margin-top: 2px;
+      font-size: .9rem;
+      color: rgba(51,65,85,.85);
+      font-weight: 600;
+    }
+
+    /* ===== Recent report item hover slide ===== */
+    .report-item{
+      transition: transform .25s ease, box-shadow .25s ease, background .25s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .report-item::after{
+      content:"";
+      position:absolute;
+      inset:-120px;
+      background: radial-gradient(circle, rgba(255,255,255,.35) 0%, transparent 55%);
+      transform: translateX(-55%);
+      transition: transform .5s ease;
+      pointer-events:none;
+    }
+    .report-item:hover{
+      transform: translateX(10px);
+      box-shadow: 0 14px 40px rgba(59,130,246,.18);
+      background: rgba(255,255,255,.78);
+    }
+    .report-item:hover::after{ transform: translateX(5%); }
+
+    /* ---- Modals (compat with original JS) ---- */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(10, 14, 39, 0.75); z-index: 2000; display: none; backdrop-filter: blur(12px); }
     .modal-backdrop.show { display: flex; }
-    .modal-box { position: relative; background: #fff; border-radius: .75rem; width: 100%; max-width: 42rem; margin: auto; box-shadow: 0 20px 40px rgba(0,0,0,.25); z-index: 2001; }
+    .modal-box { position: relative; background: rgba(255,255,255,.95); border-radius: 1rem; width: 100%; max-width: 42rem; margin: auto; box-shadow: 0 20px 60px rgba(0,0,0,.35); z-index: 2001; border: 1px solid rgba(59,130,246,.18); backdrop-filter: blur(20px); }
     body.modal-open { overflow: hidden; }
+
+    /* Make export button pop */
+    #exportBtn{
+      background: linear-gradient(135deg, #2563eb 0%, #06b6d4 100%);
+      color: #ffffff;
+      border: 1px solid rgba(255,255,255,0.35);
+      box-shadow: 0 0 40px rgba(37, 99, 235, 0.35), 0 10px 24px rgba(6, 182, 212, 0.18);
+    }
+    #exportBtn:hover{
+      filter: brightness(1.06);
+      box-shadow: 0 0 60px rgba(37, 99, 235, 0.5), 0 16px 40px rgba(6, 182, 212, 0.28);
+    }
   </style>
 
   <script>
-    // ถ้า frontend/backed อยู่โดเมนเดียวกัน ให้เว้นว่าง ("")
-    // ถ้าแยก service ให้ใส่ URL เต็ม เช่น
-    // const API_BASE = "https://water-mark-measure.onrender.com";
     const API_BASE = "";
-
     const SKIP_INFER = new URLSearchParams(location.search).get("debug") === "1" ? 1 : 0;
     const MAX_MB = 10;
     const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
@@ -47,212 +298,282 @@
   </script>
 </head>
 
-<body class="bg-gray-50">
-  <!-- Header -->
-  <header class="bg-blue-600 text-white shadow">
-    <div class="container mx-auto px-4 py-5">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-semibold">ระบบรวบรวมร่องรอยน้ำท่วม</h1>
-          <p class="text-blue-100 mt-1">รวบรวมข้อมูลจากภาพถ่ายภาคสนามเพื่อสร้างแผนที่ระดับน้ำท่วมย้อนหลัง</p>
-        </div>
-        <div class="flex items-center gap-2">
-          <button id="exportBtn" class="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg border border-white/20">ดาวน์โหลดข้อมูล</button>
-          <div class="text-right ml-3">
-            <div class="text-xs text-blue-100">ข้อมูลทั้งหมด</div>
-            <div class="text-xl font-bold" id="totalReports">0</div>
-            <div class="text-xs text-blue-100">รายงาน</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <!-- Main -->
-  <div class="container mx-auto px-4 py-8">
-    <div class="grid lg:grid-cols-2 gap-8">
-      <!-- Upload -->
-      <div class="bg-white rounded-xl shadow p-6">
-        <h2 class="text-xl font-semibold text-gray-800 mb-6">อัปโหลดภาพร่องรอยน้ำท่วม</h2>
-
-        <div class="upload-area rounded-lg p-8 text-center mb-6" id="uploadArea">
-          <p class="text-lg text-gray-700 mb-1">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
-          <p class="text-sm text-gray-500">รองรับไฟล์ JPG, PNG, WEBP (ขนาดไม่เกิน 10MB)</p>
-          <input type="file" id="imageInput" accept="image/*" class="hidden" multiple>
-          <div id="fileInfo" class="mt-3 text-sm text-gray-600"></div>
-        </div>
-
-        <div class="space-y-4">
+<body class="h-full">
+  <div class="h-full overflow-auto">
+    <!-- Header -->
+    <header class="header-gradient">
+      <div class="container mx-auto px-4 py-6">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">ตำแหน่งที่พบ</label>
-            <div class="flex gap-2 flex-wrap">
-              <input id="locationInput" type="text" placeholder='เช่น "18.7883, 98.9853"'
-                     class="flex-1 min-w-[220px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <button id="getLocationBtn" class="px-3 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg whitespace-nowrap">ใช้ตำแหน่งปัจจุบัน</button>
-              <button id="pickOnMapBtn" class="px-3 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg whitespace-nowrap">ปักหมุดบนแผนที่</button>
+            <h1 class="text-3xl font-bold" style="background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 50%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+              ระบบรวบรวมร่องรอยน้ำท่วม
+            </h1>
+            <p class="text-slate-700 mt-2 text-lg font-medium">
+              รวบรวมข้อมูลจากภาพถ่ายภาคสนามเพื่อสร้างแผนที่ระดับน้ำท่วมย้อนหลัง
+            </p>
+          </div>
+
+          <div class="text-right rounded-2xl p-5 backdrop-blur-sm border-2 border-blue-400/40"
+               style="background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(224,242,254,.8)); box-shadow: 0 0 40px rgba(59,130,246,.25), inset 0 2px 20px rgba(96,165,250,.1);">
+            <div class="text-sm font-semibold text-blue-700">ข้อมูลทั้งหมด</div>
+            <div class="text-4xl font-bold" id="totalReports"
+                 style="background: linear-gradient(135deg, #3b82f6, #06b6d4); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+              0
             </div>
-            <div id="locationStatus" class="mt-2 text-sm hidden"></div>
-          </div>
+            <div class="text-sm font-semibold text-blue-700">รายงาน</div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">ที่อยู่/จุดสังเกต (ถ้ามี)</label>
-            <input id="addressInput" type="text" placeholder="เช่น หน้าร้าน..., ซอย..., ตรงข้าม..."
-                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            <p class="text-xs text-gray-500 mt-1">ถ้าเว้นว่าง ระบบจะใช้ค่าจากช่องพิกัด (lat, lng) ให้อัตโนมัติ</p>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">วัตถุที่ถ่าย</label>
-            <select id="objectTypeInput" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="">เลือกวัตถุที่ถ่าย</option>
-              <option value="เสาไฟ">เสาไฟ</option>
-              <option value="รั้วบ้าน">รั้วบ้าน</option>
-              <option value="อื่นๆ">อื่นๆ (ระบุเอง)</option>
-            </select>
-          </div>
-
-          <div id="customObjectDiv" class="hidden">
-            <label class="block text-sm font-medium text-gray-700 mb-2">ระบุวัตถุ</label>
-            <input id="customObjectInput" type="text" placeholder="เช่น ป้ายจราจร, ต้นไม้, อาคาร"
-                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">รายละเอียดเพิ่มเติม</label>
-            <textarea id="descriptionInput" rows="3" placeholder="อธิบายลักษณะรอยน้ำ สภาพแวดล้อม หรือข้อมูลเพิ่มเติม"
-                      class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
-          </div>
-
-          <button id="submitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg">บันทึกข้อมูล</button>
-        </div>
-      </div>
-
-      <!-- Map + list -->
-      <div class="space-y-6">
-        <div class="bg-white rounded-xl shadow p-6">
-          <h2 class="text-xl font-semibold text-gray-800 mb-4">แผนที่ร่องรอยน้ำท่วม</h2>
-          <div id="floodMap" class="rounded-lg h-[520px]"></div>
-
-          <div class="mt-3 flex items-center gap-2 flex-wrap">
-            <button id="toggleIdw" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">
-              แสดง/ซ่อนแผนที่ Interpolation
+            <button id="exportBtn" class="mt-4 w-full px-4 py-3 rounded-xl btn-3d font-semibold flex items-center justify-center gap-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+              </svg>
+              ดาวน์โหลดข้อมูล
             </button>
           </div>
+        </div>
+      </div>
+    </header>
 
-          <!-- Legend -->
-          <div class="mt-4 flex flex-wrap gap-4 text-sm">
-            <div class="flex items-center"><div class="w-4 h-4 bg-red-500 rounded-full mr-2"></div><span>สูง (120+ ซม.)</span></div>
-            <div class="flex items-center"><div class="w-4 h-4 bg-orange-500 rounded-full mr-2"></div><span>ปานกลาง (60–120 ซม.)</span></div>
-            <div class="flex items-center"><div class="w-4 h-4 bg-yellow-500 rounded-full mr-2"></div><span>ต่ำ (0–60 ซม.)</span></div>
+    <!-- Main -->
+    <div class="container mx-auto px-4 py-8">
+      <div class="grid lg:grid-cols-2 gap-8">
+        <!-- Upload -->
+        <div class="rounded-xl p-6 card-3d">
+          <div class="section-head">
+            <div class="section-icon">
+              <!-- upload icon -->
+              <svg class="w-5 h-5 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 12v9m0-9l-3 3m3-3l3 3" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div>
+              <h2 class="section-title">อัปโหลดภาพร่องรอยน้ำท่วม</h2>
+              <div class="section-sub">เพิ่มข้อมูลภาคสนามเพื่อทำแผนที่น้ำท่วมย้อนหลัง</div>
+            </div>
+          </div>
+
+          <div class="upload-area rounded-xl p-8 text-center mb-6 neon-border" id="uploadArea">
+            <svg class="w-20 h-20 mx-auto mb-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/>
+            </svg>
+            <p class="text-lg text-blue-700 mb-2 font-medium">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+            <p class="text-sm text-slate-600 font-medium">รองรับไฟล์ JPG, PNG, WEBP (ขนาดไม่เกิน 10MB)</p>
+            <input type="file" id="imageInput" accept="image/*" class="hidden" multiple>
+            <div id="fileInfo" class="mt-3 text-sm text-slate-600 font-medium"></div>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-semibold text-slate-800 mb-2">ตำแหน่งที่พบ</label>
+              <div class="flex gap-2 flex-wrap">
+                <input id="locationInput" type="text" placeholder='เช่น "18.7883, 98.9853"'
+                       class="flex-1 min-w-[220px] px-4 py-3 rounded-xl input-3d">
+                <button id="getLocationBtn" class="px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl btn-3d whitespace-nowrap font-medium">
+                  ใช้ตำแหน่งปัจจุบัน
+                </button>
+                <button id="pickOnMapBtn" class="px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl btn-3d whitespace-nowrap font-medium">
+                  ปักหมุดบนแผนที่
+                </button>
+              </div>
+              <div id="locationStatus" class="mt-2 text-sm hidden font-medium"></div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-800 mb-2">ที่อยู่/จุดสังเกต (ถ้ามี)</label>
+              <input id="addressInput" type="text" placeholder="เช่น หน้าร้าน..., ซอย..., ตรงข้าม..."
+                     class="w-full px-4 py-3 rounded-xl input-3d">
+              <p class="text-xs text-slate-600 mt-1 font-medium">ถ้าเว้นว่าง ระบบจะใช้ค่าจากช่องพิกัด (lat, lng) ให้อัตโนมัติ</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-800 mb-2">วัตถุที่ถ่าย</label>
+              <select id="objectTypeInput" class="w-full px-4 py-3 rounded-xl input-3d">
+                <option value="">เลือกวัตถุที่ถ่าย</option>
+                <option value="เสาไฟ">เสาไฟ</option>
+                <option value="รั้วบ้าน">รั้วบ้าน</option>
+                <option value="อื่นๆ">อื่นๆ (ระบุเอง)</option>
+              </select>
+            </div>
+
+            <div id="customObjectDiv" class="hidden">
+              <label class="block text-sm font-semibold text-slate-800 mb-2">ระบุวัตถุ</label>
+              <input id="customObjectInput" type="text" placeholder="เช่น ป้ายจราจร, ต้นไม้, อาคาร"
+                     class="w-full px-4 py-3 rounded-xl input-3d">
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-slate-800 mb-2">รายละเอียดเพิ่มเติม</label>
+              <textarea id="descriptionInput" rows="3" placeholder="อธิบายลักษณะรอยน้ำ สภาพแวดล้อม หรือข้อมูลเพิ่มเติม"
+                        class="w-full px-4 py-3 rounded-xl input-3d"></textarea>
+            </div>
+
+            <button id="submitBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-xl btn-3d">
+              บันทึกข้อมูล
+            </button>
           </div>
         </div>
 
-        <div class="bg-white rounded-xl shadow p-6">
-          <h2 class="text-xl font-semibold text-gray-800 mb-4">รายงานล่าสุด</h2>
-          <div id="recentReports" class="space-y-4"></div>
+        <!-- Map + list -->
+        <div class="space-y-6">
+          <div class="rounded-xl p-6 card-3d">
+            <div class="section-head">
+              <div class="section-icon">
+                <!-- map icon -->
+                <svg class="w-5 h-5 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M9 20l-5 2V6l5-2 6 2 5-2v16l-5 2-6-2z" stroke-width="1.8" stroke-linejoin="round"/>
+                  <path d="M9 4v16M15 6v16" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div>
+                <h2 class="section-title">แผนที่ร่องรอยน้ำท่วม</h2>
+                <div class="section-sub">ดูจุดสำรวจ + การประมาณค่าพื้นที่ (Interpolation)</div>
+              </div>
+            </div>
+
+            <div id="floodMap" class="map-container rounded-xl h-[520px] overflow-hidden"></div>
+
+            <div class="mt-4 flex items-center gap-2 flex-wrap">
+              <button id="toggleIdw" class="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl btn-3d font-medium">
+                แสดง/ซ่อนแผนที่ Interpolation
+              </button>
+            </div>
+
+            <!-- Legend -->
+            <div class="mt-4 flex flex-wrap gap-4 text-sm font-medium">
+              <div class="flex items-center">
+                <div class="w-4 h-4 bg-red-500 rounded-full mr-2" style="box-shadow: 0 0 10px #ef4444;"></div>
+                <span class="text-slate-700">สูง (120+ ซม.)</span>
+              </div>
+              <div class="flex items-center">
+                <div class="w-4 h-4 bg-orange-500 rounded-full mr-2" style="box-shadow: 0 0 10px #f97316;"></div>
+                <span class="text-slate-700">ปานกลาง (60–120 ซม.)</span>
+              </div>
+              <div class="flex items-center">
+                <div class="w-4 h-4 bg-yellow-500 rounded-full mr-2" style="box-shadow: 0 0 10px #eab308;"></div>
+                <span class="text-slate-700">ต่ำ (0–60 ซม.)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-xl p-6 card-3d">
+            <div class="section-head">
+              <div class="section-icon">
+                <!-- list icon -->
+                <svg class="w-5 h-5 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 6h13M8 12h13M8 18h13" stroke-width="1.8" stroke-linecap="round"/>
+                  <path d="M3.5 6h.5M3.5 12h.5M3.5 18h.5" stroke-width="2.6" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div>
+                <h2 class="section-title">รายงานล่าสุด</h2>
+                <div class="section-sub">แสดง 5 รายการล่าสุด (Hover เพื่อดูฟีล)</div>
+              </div>
+            </div>
+
+            <div id="recentReports" class="space-y-3"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="mt-8 grid md:grid-cols-4 gap-6">
+        <div class="rounded-xl p-6 text-center stat-card neon-border">
+          <div id="avgLevel" class="text-3xl font-bold text-blue-600">0</div>
+          <div class="text-sm text-slate-700 mt-2 font-semibold">ความสูงรอยน้ำเฉลี่ย (ซม.)</div>
+        </div>
+        <div class="rounded-xl p-6 text-center stat-card neon-border">
+          <div id="highRisk" class="text-3xl font-bold text-red-600">0</div>
+          <div class="text-sm text-slate-700 mt-2 font-semibold">พื้นที่น้ำเคยท่วมสูง</div>
+        </div>
+        <div class="rounded-xl p-6 text-center stat-card neon-border">
+          <div id="totalAreas" class="text-3xl font-bold text-green-600">0</div>
+          <div class="text-sm text-slate-700 mt-2 font-semibold">จำนวนจุดสำรวจ</div>
+        </div>
+        <div class="rounded-xl p-6 text-center stat-card neon-border">
+          <div id="lastUpdate" class="text-3xl font-bold text-purple-600">-</div>
+          <div class="text-sm text-slate-700 mt-2 font-semibold">อัปเดตล่าสุด</div>
         </div>
       </div>
     </div>
 
-    <!-- Stats -->
-    <div class="mt-8 grid md:grid-cols-4 gap-6">
-      <div class="bg-white rounded-xl shadow p-6 text-center">
-        <div id="avgLevel" class="text-2xl font-bold text-blue-600">0</div>
-        <div class="text-sm text-gray-600">ความสูงรอยน้ำเฉลี่ย</div>
-      </div>
-      <div class="bg-white rounded-xl shadow p-6 text-center">
-        <div id="highRisk" class="text-2xl font-bold text-red-600">0</div>
-        <div class="text-sm text-gray-600">พื้นที่น้ำเคยท่วมสูง</div>
-      </div>
-      <div class="bg-white rounded-xl shadow p-6 text-center">
-        <div id="totalAreas" class="text-2xl font-bold text-green-600">0</div>
-        <div class="text-sm text-gray-600">จำนวนจุดสำรวจ</div>
-      </div>
-      <div class="bg-white rounded-xl shadow p-6 text-center">
-        <div id="lastUpdate" class="text-2xl font-bold text-purple-600">-</div>
-        <div class="text-sm text-gray-600">อัปเดตล่าสุด</div>
+    <!-- ===== Modal: Alert ===== -->
+    <div id="alertModal" class="modal-backdrop items-center justify-center">
+      <div class="modal-box w-full max-w-md mx-4">
+        <div class="px-5 py-4 border-b border-blue-100">
+          <h3 id="alertTitle" class="text-lg font-semibold text-slate-800">แจ้งเตือน</h3>
+        </div>
+        <div class="px-5 py-4">
+          <p id="alertMessage" class="text-sm text-slate-700"></p>
+        </div>
+        <div class="px-5 py-4 border-t border-blue-100 flex justify-end gap-2">
+          <button id="alertClose" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg btn-3d">ปิด</button>
+        </div>
       </div>
     </div>
+
+    <!-- ===== Modal: Export ===== -->
+    <div id="exportModal" class="modal-backdrop items-center justify-center">
+      <div class="modal-box w-full max-w-lg mx-4">
+        <div class="px-5 py-4 border-b border-blue-100 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-800">ดาวน์โหลดข้อมูล</h3>
+            <p class="text-sm text-slate-600 mt-1">เลือกรูปแบบที่ต้องการดาวน์โหลด</p>
+          </div>
+          <button id="exportCloseX" class="text-2xl leading-none text-slate-400 hover:text-slate-600">&times;</button>
+        </div>
+        <div class="px-5 py-4 space-y-4">
+          <div class="border border-blue-100 rounded-xl p-4 bg-white/70">
+            <h4 class="font-semibold text-slate-800">ข้อมูลรายงาน (CSV)</h4>
+            <div class="mt-3">
+              <button id="exportCsvBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg btn-3d">ดาวน์โหลด CSV</button>
+            </div>
+          </div>
+          <div class="border border-blue-100 rounded-xl p-4 bg-white/70">
+            <h4 class="font-semibold text-slate-800">ชั้นแผนที่ Interpolation</h4>
+            <p class="text-sm text-slate-600 mt-1">ดาวน์โหลดเป็น GeoJSON</p>
+            <div class="mt-3">
+              <button id="exportIdwBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg btn-3d">ดาวน์โหลด GeoJSON</button>
+            </div>
+          </div>
+        </div>
+        <div class="px-5 py-4 border-t border-blue-100 flex justify-end gap-2">
+          <button id="exportClose" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Modal: Pick-on-map ===== -->
+    <div id="pickModal" class="modal-backdrop items-center justify-center">
+      <div class="modal-box w-full max-w-3xl mx-4">
+        <div class="px-5 py-4 border-b border-blue-100 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-800">โปรดปักหมุดเพื่อระบุพิกัด</h3>
+            <p class="text-sm text-slate-600 mt-1">คลิกบนแผนที่เพื่อเลือกจุด • สลับพื้นหลังได้</p>
+          </div>
+          <button id="pickCloseX" class="text-2xl leading-none text-slate-400 hover:text-slate-600">&times;</button>
+        </div>
+        <div class="px-5 pt-4 pb-2">
+          <div class="flex justify-between items-center mb-2 flex-wrap gap-2">
+            <div class="space-x-2">
+              <button id="pickBaseOsm" class="px-3 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg">แผนที่</button>
+              <button id="pickBaseEsri" class="px-3 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg">ดาวเทียม</button>
+            </div>
+            <div class="text-sm text-slate-700 font-medium">
+              พิกัดที่เลือก: <span id="pickedLatLng">-</span>
+            </div>
+          </div>
+          <div id="pickMap" class="h-[420px] rounded-xl border border-blue-100 overflow-hidden"></div>
+        </div>
+        <div class="px-5 py-4 border-t border-blue-100 flex justify-end gap-2">
+          <button id="pickCancel" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg">ยกเลิก</button>
+          <button id="pickConfirm" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg btn-3d" disabled>ยืนยันพิกัด</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <!-- ===== Modal: Alert ===== -->
-  <div id="alertModal" class="modal-backdrop items-center justify-center">
-    <div class="modal-box w-full max-w-md mx-4">
-      <div class="px-5 py-4 border-b">
-        <h3 id="alertTitle" class="text-lg font-semibold text-gray-800">แจ้งเตือน</h3>
-      </div>
-      <div class="px-5 py-4">
-        <p id="alertMessage" class="text-sm text-gray-700"></p>
-      </div>
-      <div class="px-5 py-4 border-t flex justify-end gap-2">
-        <button id="alertClose" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">ปิด</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===== Modal: Export ===== -->
-  <div id="exportModal" class="modal-backdrop items-center justify-center">
-    <div class="modal-box w-full max-w-lg mx-4">
-      <div class="px-5 py-4 border-b flex items-center justify-between">
-        <div>
-          <h3 class="text-lg font-semibold text-gray-800">ดาวน์โหลดข้อมูล</h3>
-          <p class="text-sm text-gray-500 mt-1">เลือกรูปแบบที่ต้องการดาวน์โหลด</p>
-        </div>
-        <button id="exportCloseX" class="text-2xl leading-none text-gray-400 hover:text-gray-600">&times;</button>
-      </div>
-      <div class="px-5 py-4 space-y-4">
-        <div class="border rounded-lg p-4">
-          <h4 class="font-medium text-gray-800">ข้อมูลรายงาน (CSV)</h4>
-          <div class="mt-3">
-            <button id="exportCsvBtn" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">ดาวน์โหลด CSV</button>
-          </div>
-        </div>
-        <div class="border rounded-lg p-4">
-          <h4 class="font-medium text-gray-800">ชั้นแผนที่ Interpolation</h4>
-          <p class="text-sm text-gray-600 mt-1">ดาวน์โหลดเป็น GeoJSON</p>
-          <div class="mt-3">
-            <button id="exportIdwBtn" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">ดาวน์โหลด GeoJSON</button>
-          </div>
-        </div>
-      </div>
-      <div class="px-5 py-4 border-t flex justify-end gap-2">
-        <button id="exportClose" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg">ปิด</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===== Modal: Pick-on-map ===== -->
-  <div id="pickModal" class="modal-backdrop items-center justify-center">
-    <div class="modal-box w-full max-w-3xl mx-4">
-      <div class="px-5 py-4 border-b flex items-center justify-between">
-        <div>
-          <h3 class="text-lg font-semibold text-gray-800">โปรดปักหมุดเพื่อระบุพิกัด</h3>
-          <p class="text-sm text-gray-500 mt-1">คลิกบนแผนที่เพื่อเลือกจุด • สลับพื้นหลังได้</p>
-        </div>
-        <button id="pickCloseX" class="text-2xl leading-none text-gray-400 hover:text-gray-600">&times;</button>
-      </div>
-      <div class="px-5 pt-4 pb-2">
-        <div class="flex justify-between items-center mb-2">
-          <div class="space-x-2">
-            <button id="pickBaseOsm" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded">แผนที่</button>
-            <button id="pickBaseEsri" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded">ดาวเทียม</button>
-          </div>
-          <div class="text-sm text-gray-700">
-            พิกัดที่เลือก: <span id="pickedLatLng">-</span>
-          </div>
-        </div>
-        <div id="pickMap" class="h-[420px] rounded-md border"></div>
-      </div>
-      <div class="px-5 py-4 border-t flex justify-end gap-2">
-        <button id="pickCancel" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg">ยกเลิก</button>
-        <button id="pickConfirm" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg" disabled>ยืนยันพิกัด</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Scripts -->
+  <!-- Scripts (logic เดิม / เพิ่ม class report-item ใน renderReports เท่านั้น) -->
   <script>
-    // ===== State & DOM =====
     let floodReports = [];
     let idwLayer = null;
     let lastIdwGeoJson = null;
@@ -276,7 +597,6 @@
     const descriptionInput = document.getElementById('descriptionInput');
     const exportBtn = document.getElementById('exportBtn');
 
-    // ===== Modal helpers =====
     const alertModal = document.getElementById('alertModal');
     const alertTitle = document.getElementById('alertTitle');
     const alertMessage = document.getElementById('alertMessage');
@@ -289,7 +609,6 @@
     const exportIdwBtn = document.getElementById('exportIdwBtn');
 
     const pickModal = document.getElementById('pickModal');
-    const pickCloseX = document.getElementById('pickCloseX');
     const pickCancel = document.getElementById('pickCancel');
     const pickConfirm = document.getElementById('pickConfirm');
     const pickedLatLngEl = document.getElementById('pickedLatLng');
@@ -314,7 +633,6 @@
     exportCloseX?.addEventListener('click', hideExport);
     exportModal.addEventListener('click', (e) => { if (e.target === exportModal) hideExport(); });
 
-    // ===== Base maps =====
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' });
     const imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' });
 
@@ -332,7 +650,6 @@
     const markersCluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 50 });
     map.addLayer(markersCluster);
 
-    // สีตามเกณฑ์
     function severityColorByCm(cm) { if (cm > 120) return '#ef4444'; if (cm > 60) return '#f97316'; return '#eab308'; }
     function colorByCm(cm)        { if (cm > 120) return '#ef4444'; if (cm > 60) return '#f59e0b'; return '#84cc16'; }
 
@@ -347,7 +664,7 @@
       const val = (report.water_level_m ?? report.water_level_raw_m);
       const hasVal = (val != null && isFinite(val));
       const cm = hasVal ? Math.round(val * 100) : null;
-      const color = hasVal ? severityColorByCm(cm) : '#6b7280'; // เทา ถ้าไม่มีค่า
+      const color = hasVal ? severityColorByCm(cm) : '#6b7280';
 
       const marker = L.circleMarker([report.lat, report.lng], {
           radius: 8,
@@ -362,7 +679,7 @@
             <div><b>วัตถุที่ถ่าย:</b> ${report.object_type || '-'}</div>
             <div><b>รายละเอียดเพิ่มเติม:</b> ${report.description || '-'}</div>
             <div><b>วันที่เก็บข้อมูล:</b> ${thDateTime(report.date_iso)}</div>
-            ${report.photo_url ? `<div style="margin-top:6px;"><a href="${API_BASE}${report.photo_url}" target="_blank" class="text-blue-600 underline">เปิดภาพ</a></div>` : ''}
+            ${report.photo_url ? `<div style="margin-top:6px;"><a href="${API_BASE}${report.photo_url}" target="_blank" style="color:#2563eb;text-decoration:underline;">เปิดภาพ</a></div>` : ''}
           </div>`);
       markersCluster.addLayer(marker);
     }
@@ -372,10 +689,9 @@
       if (count > 0) map.fitBounds(markersCluster.getBounds(), { padding: [30, 30] });
     }
 
-    // ===== UI helpers =====
     function showLocationStatus(msg, type) {
       locationStatus.classList.remove('hidden');
-      locationStatus.className = `mt-2 text-sm ${type==='success'?'text-green-600':type==='error'?'text-red-600':'text-blue-600'}`;
+      locationStatus.className = `mt-2 text-sm font-medium ${type==='success'?'text-green-600':type==='error'?'text-red-600':'text-blue-600'}`;
       locationStatus.textContent = msg;
       if (type === 'success' || type === 'error') setTimeout(() => locationStatus.classList.add('hidden'), 3000);
     }
@@ -425,26 +741,38 @@
       document.getElementById('lastUpdate').textContent = lastD ? timeAgo(lastD) : '-';
     }
 
+    // ✅ เพิ่ม class "report-item" เพื่อให้ hover slide + glow ทำงาน (ไม่เปลี่ยน logic)
     function renderReports() {
+      const badge = (cm, hasVal) => {
+        if (!hasVal) return { text:'ไม่มีค่า', bg:'#e5e7eb', fg:'#374151', border:'#9ca3af' };
+        if (cm > 120) return { text:'สูง', bg:'#fee2e2', fg:'#991b1b', border:'#ef4444' };
+        if (cm > 60)  return { text:'ปานกลาง', bg:'#ffedd5', fg:'#9a3412', border:'#f97316' };
+        return { text:'ต่ำ', bg:'#fef9c3', fg:'#854d0e', border:'#eab308' };
+      };
+
       recentReportsEl.innerHTML = floodReports.slice(-5).reverse().map(r => {
         const v = r.water_level_m ?? r.water_level_raw_m;
         const hasVal = (v != null && isFinite(v));
         const cm = hasVal ? Math.round(v * 100) : null;
-        const severityColor = hasVal ? (cm > 120 ? 'red' : cm > 60 ? 'orange' : 'yellow') : 'gray';
-        const severityText  = hasVal ? (cm > 120 ? 'สูง' : cm > 60 ? 'ปานกลาง' : 'ต่ำ') : 'ไม่มีค่า';
+        const b = badge(cm, hasVal);
+
         return `
-          <div class="border-l-4 border-${severityColor}-500 pl-4 py-2">
-            <div class="flex justify-between items-start">
+          <div class="report-item rounded-xl p-4 bg-white/70 border border-blue-100"
+               style="border-left: 6px solid ${b.border}; box-shadow: 0 6px 20px rgba(59,130,246,.08);">
+            <div class="flex justify-between items-start gap-3">
               <div>
-                <h4 class="font-semibold text-gray-800">${r.address || `${r.lat}, ${r.lng}`}</h4>
-                <p class="text-sm text-gray-600">
+                <h4 class="font-semibold text-slate-800">${r.address || `${r.lat}, ${r.lng}`}</h4>
+                <p class="text-sm text-slate-600">
                   ระดับน้ำ: ${hasVal ? v.toFixed(2) : '—'} m |
                   วัตถุ: ${r.object_type || '-'} |
                   วันที่: ${thDateTime(r.date_iso)}
                 </p>
-                <p class="text-sm text-gray-500 mt-1">${r.description || '-'}</p>
+                <p class="text-sm text-slate-500 mt-1">${r.description || '-'}</p>
               </div>
-              <span class="text-xs bg-${severityColor}-100 text-${severityColor}-800 px-2 py-1 rounded-full">${severityText}</span>
+              <span class="text-xs px-3 py-1 rounded-full font-semibold"
+                    style="background:${b.bg}; color:${b.fg}; border:1px solid rgba(0,0,0,.06);">
+                ${b.text}
+              </span>
             </div>
           </div>`;
       }).join('');
@@ -455,7 +783,6 @@
       else { customObjectDiv.classList.add('hidden'); customObjectInput.value=''; }
     });
 
-    // ===== Geolocation =====
     document.getElementById('getLocationBtn').addEventListener('click', () => {
       if (!navigator.geolocation) return showAlert('ไม่รองรับการขอตำแหน่ง', 'เบราว์เซอร์ของคุณไม่รองรับการใช้งานตำแหน่ง');
       showLocationStatus('กำลังขอตำแหน่ง...', 'loading');
@@ -474,7 +801,6 @@
       );
     });
 
-    // ===== Pick on Map Modal =====
     let pickMap, pickMarker, pickBaseOsm, pickBaseEsri, activeBase;
     function openPickModal() {
       openModal(pickModal);
@@ -520,7 +846,6 @@
       showLocationStatus('เลือกพิกัดจากแผนที่เรียบร้อย', 'success');
     });
 
-    // ===== File UI + validation =====
     uploadArea.addEventListener('click', () => imageInput.click());
     uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
     uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
@@ -538,11 +863,10 @@
       const ok = validateFile(files[0]);
       if (!ok) { imageInput.value = ''; fileInfo.textContent=''; return; }
       uploadArea.innerHTML = `
-        <p class="text-lg text-green-700 mb-1">เลือกไฟล์เรียบร้อย</p>
-        <p class="text-sm text-gray-600">${files[0].name} (${(files[0].size/1024/1024).toFixed(2)} MB)</p>`;
+        <p class="text-lg text-green-700 mb-1 font-semibold">เลือกไฟล์เรียบร้อย</p>
+        <p class="text-sm text-slate-700 font-medium">${files[0].name} (${(files[0].size/1024/1024).toFixed(2)} MB)</p>`;
     }
 
-    // ===== Helpers =====
     function parseLatLng(text) {
       if (!text) return null;
       const p = text.split(',').map(s => s.trim());
@@ -565,7 +889,6 @@
       return head + '\n' + body;
     }
 
-    // ===== Submit -> API =====
     submitBtn.addEventListener('click', async () => {
       const loc = parseLatLng(locationInput.value.trim());
       const objectType = objectTypeInput.value;
@@ -608,11 +931,14 @@
         updateStats();
         renderReports();
 
-        // Reset
         imageInput.value = '';
         uploadArea.innerHTML = `
-          <p class="text-lg text-gray-700 mb-1">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
-          <p class="text-sm text-gray-500">รองรับไฟล์ JPG, PNG, WEBP (ขนาดไม่เกิน 10MB)</p>`;
+          <svg class="w-20 h-20 mx-auto mb-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/>
+          </svg>
+          <p class="text-lg text-blue-700 mb-2 font-medium">ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์</p>
+          <p class="text-sm text-slate-600 font-medium">รองรับไฟล์ JPG, PNG, WEBP (ขนาดไม่เกิน 10MB)</p>
+        `;
 
         showAlert('บันทึกสำเร็จ', 'ข้อมูลของคุณได้รับการบันทึกเรียบร้อยแล้ว');
       } catch (err) {
@@ -623,7 +949,6 @@
       }
     });
 
-    // ===== โหลดรายงานเริ่มต้น =====
     (async function initReports(){
       try {
         const res = await fetch(`${API_BASE}/api/reports?limit=200`, { cache: 'no-store' });
@@ -639,7 +964,6 @@
       } catch (err) { showAlert('ไม่สามารถโหลดข้อมูลเริ่มต้น', String(err.message || err)); }
     })();
 
-    // ===== Interpolation (IDW) + Clip =====
     function computeIdwGrid(points, cellKm=0.25) {
       if (!points || !points.length) return null;
       const feats = points.map(p => ({
@@ -704,7 +1028,6 @@
       renderIdw(grid);
     });
 
-    // ===== Export =====
     exportCsvBtn.addEventListener('click', () => {
       if (!floodReports.length) return showAlert('ไม่พบข้อมูล', 'ยังไม่มีข้อมูลรายงานสำหรับดาวน์โหลด');
 
@@ -735,7 +1058,6 @@
       downloadBlob(JSON.stringify(lastIdwGeoJson), `flood_interpolation_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.geojson`, 'application/geo+json;charset=utf-8');
     });
 
-    // ===== Boundary =====
     function addBoundary(rawGj) {
       if (boundaryLayer) { map.removeLayer(boundaryLayer); boundaryLayer = null; }
       const normalized = normalizeBoundary(rawGj);
